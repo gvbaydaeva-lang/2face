@@ -827,7 +827,6 @@
 
         /** Узкая фиксированная колонка «Ученик»; ширина колонок занятий считается отдельно под 4 колонки в видимой области. */
         const ATT_LEFT_COL = 128;
-        const ATT_LESSON_PAD_X = 48;
 
         /** Слева — фиксированная колонка (не в скролле); справа — один общий горизонтальный скролл шапки и ячеек. */
         function AttendanceTable({ students, columns, onCellTap, onRowOpen }) {
@@ -840,10 +839,12 @@
             const measure = useCallback(() => {
                 const sc = scrollRef.current;
                 if (!sc) return;
-                const inner = Math.max(0, sc.clientWidth - ATT_LESSON_PAD_X);
-                if (inner < 16) return;
-                const w = Math.floor(inner / 4);
-                setColW(Math.max(48, w));
+                const cs = getComputedStyle(sc);
+                const pl = parseFloat(cs.paddingLeft) || 0;
+                const pr = parseFloat(cs.paddingRight) || 0;
+                const inner = Math.max(0, sc.clientWidth - pl - pr);
+                if (inner < 8) return;
+                setColW(inner / 4);
             }, []);
 
             useLayoutEffect(() => {
@@ -869,6 +870,7 @@
                 setEdge({ start: el.scrollLeft <= 4, end: el.scrollLeft >= max - 4 });
             }, []);
 
+            /** Список занятий изменился — показать последние 4 колонки (в конец скролла). */
             useLayoutEffect(() => {
                 const el = scrollRef.current;
                 if (!el) return;
@@ -877,6 +879,17 @@
                     updateEdges();
                 });
             }, [columnsSig, students.length, updateEdges]);
+
+            /** Только пересчёт ширины — не сдвигать к концу, чтобы не «прыгало» при ресайзе; удержать scroll в допустимых пределах. */
+            useLayoutEffect(() => {
+                const el = scrollRef.current;
+                if (!el) return;
+                requestAnimationFrame(() => {
+                    const max = Math.max(0, el.scrollWidth - el.clientWidth);
+                    if (el.scrollLeft > max) el.scrollLeft = max;
+                    updateEdges();
+                });
+            }, [colW, updateEdges]);
 
             useEffect(() => {
                 const el = scrollRef.current;
@@ -894,7 +907,13 @@
             }, [colW]);
 
             const contentMin = Math.max(columns.length * colW, 1);
-            const cellStyle = { width: colW, minWidth: colW, flex: '0 0 auto' };
+            const cellStyle = {
+                width: colW,
+                minWidth: colW,
+                maxWidth: colW,
+                flex: '0 0 auto',
+                boxSizing: 'border-box'
+            };
 
             return (
                 <div className="att-table-shell overflow-hidden">
