@@ -830,21 +830,26 @@
 
         /** Слева — фиксированная колонка (не в скролле); справа — один общий горизонтальный скролл шапки и ячеек. */
         function AttendanceTable({ students, columns, onCellTap, onRowOpen }) {
+            const measureRef = useRef(null);
             const scrollRef = useRef(null);
-            const [colW, setColW] = useState(84);
+            /** Целая ширина области под 4 колонки (между горизонтальными паддингами скролла). */
+            const [lessonInnerPx, setLessonInnerPx] = useState(0);
             const [edge, setEdge] = useState({ start: true, end: true });
 
             const columnsSig = useMemo(() => columns.map((c) => `${c.id}:${c.date}`).join('|'), [columns]);
 
+            const colW = lessonInnerPx >= 8 ? lessonInnerPx / 4 : 84;
+
             const measure = useCallback(() => {
+                const outer = measureRef.current;
                 const sc = scrollRef.current;
-                if (!sc) return;
+                if (!outer || !sc) return;
                 const cs = getComputedStyle(sc);
                 const pl = parseFloat(cs.paddingLeft) || 0;
                 const pr = parseFloat(cs.paddingRight) || 0;
-                const inner = Math.max(0, sc.clientWidth - pl - pr);
+                const inner = Math.floor(Math.max(0, sc.clientWidth - pl - pr));
                 if (inner < 8) return;
-                setColW(inner / 4);
+                setLessonInnerPx(inner);
             }, []);
 
             useLayoutEffect(() => {
@@ -852,10 +857,10 @@
             }, [measure, columnsSig, students.length]);
 
             useEffect(() => {
-                const sc = scrollRef.current;
-                if (!sc || typeof ResizeObserver === 'undefined') return;
+                const el = measureRef.current;
+                if (!el || typeof ResizeObserver === 'undefined') return;
                 const ro = new ResizeObserver(() => measure());
-                ro.observe(sc);
+                ro.observe(el);
                 return () => ro.disconnect();
             }, [measure]);
 
@@ -870,26 +875,26 @@
                 setEdge({ start: el.scrollLeft <= 4, end: el.scrollLeft >= max - 4 });
             }, []);
 
-            /** Список занятий изменился — показать последние 4 колонки (в конец скролла). */
-            useLayoutEffect(() => {
-                const el = scrollRef.current;
-                if (!el) return;
-                requestAnimationFrame(() => {
-                    el.scrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
-                    updateEdges();
-                });
-            }, [columnsSig, students.length, updateEdges]);
+            const lessonScrollSigRef = useRef('');
 
-            /** Только пересчёт ширины — не сдвигать к концу, чтобы не «прыгало» при ресайзе; удержать scroll в допустимых пределах. */
+            /** Смена списка занятий / учеников → в конец (последние 4). Смена только ширины → clamp без сдвига к концу. */
             useLayoutEffect(() => {
                 const el = scrollRef.current;
-                if (!el) return;
+                if (!el || lessonInnerPx < 8) return;
+                const sig = `${columnsSig}|${students.length}`;
                 requestAnimationFrame(() => {
-                    const max = Math.max(0, el.scrollWidth - el.clientWidth);
-                    if (el.scrollLeft > max) el.scrollLeft = max;
-                    updateEdges();
+                    requestAnimationFrame(() => {
+                        const max = Math.max(0, el.scrollWidth - el.clientWidth);
+                        if (lessonScrollSigRef.current !== sig) {
+                            lessonScrollSigRef.current = sig;
+                            el.scrollLeft = max;
+                        } else {
+                            el.scrollLeft = Math.min(Math.max(0, el.scrollLeft), max);
+                        }
+                        updateEdges();
+                    });
                 });
-            }, [colW, updateEdges]);
+            }, [columnsSig, students.length, lessonInnerPx, updateEdges]);
 
             useEffect(() => {
                 const el = scrollRef.current;
@@ -897,12 +902,12 @@
                 updateEdges();
                 el.addEventListener('scroll', updateEdges, { passive: true });
                 return () => el.removeEventListener('scroll', updateEdges);
-            }, [columnsSig, updateEdges, colW]);
+            }, [columnsSig, updateEdges, colW, lessonInnerPx]);
 
             const scrollByDir = useCallback((dir) => {
                 const el = scrollRef.current;
                 if (!el) return;
-                const step = Math.max(colW * 2, Math.floor(el.clientWidth * 0.42));
+                const step = 4 * colW;
                 el.scrollBy({ left: dir * step, behavior: 'smooth' });
             }, [colW]);
 
@@ -911,8 +916,9 @@
                 width: colW,
                 minWidth: colW,
                 maxWidth: colW,
-                flex: '0 0 auto',
-                boxSizing: 'border-box'
+                flex: `0 0 ${colW}px`,
+                boxSizing: 'border-box',
+                flexShrink: 0
             };
 
             return (
@@ -942,10 +948,11 @@
                                     );
                                 })}
                             </div>
-                            <div className="relative flex-1 min-w-0 min-h-0 bg-white">
-                                <div ref={scrollRef} className="att-scroll-x att-lesson-scroll h-full min-h-0 flex-1 min-w-0 overflow-x-auto px-6 box-border" onScroll={updateEdges}>
-                                    <div className="inline-flex flex-col" style={{ minWidth: contentMin }}>
-                                        <div className="flex items-stretch min-h-[68px] border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)]">
+                            <div className="relative flex-1 min-w-0 min-h-0 bg-white overflow-hidden">
+                                <div ref={measureRef} className="absolute inset-0 min-w-0 overflow-hidden">
+                                    <div ref={scrollRef} className="att-scroll-x att-lesson-scroll absolute inset-0 overflow-x-auto overflow-y-hidden px-6 box-border" onScroll={updateEdges}>
+                                        <div className="flex flex-col shrink-0" style={{ width: contentMin, minWidth: contentMin }}>
+                                            <div className="flex flex-row flex-nowrap items-stretch min-h-[68px] border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)] shrink-0" style={{ width: contentMin, minWidth: contentMin }}>
                                             {columns.map((c) => (
                                                 <div key={c.id} className="flex flex-col items-center justify-center text-center border-l border-stone-200/50 first:border-l-0 px-0.5 py-1.5 overflow-hidden shrink-0" style={cellStyle}>
                                                     <span className="text-[13px] font-semibold leading-none truncate block w-full max-w-full" style={{ color: 'var(--text-primary)' }} title={c.title}>{c.title}</span>
@@ -954,7 +961,7 @@
                                             ))}
                                         </div>
                                         {students.map((s) => (
-                                            <div key={s.id} className="flex items-stretch min-h-[76px] border-b border-stone-100 last:border-b-0 bg-white">
+                                            <div key={s.id} className="flex flex-row flex-nowrap items-stretch min-h-[76px] border-b border-stone-100 last:border-b-0 bg-white shrink-0" style={{ width: contentMin, minWidth: contentMin }}>
                                                 {columns.map((c) => {
                                                     const v = s.attendance?.[c.id] ?? 0;
                                                     return (
@@ -971,6 +978,7 @@
                                                 })}
                                             </div>
                                         ))}
+                                        </div>
                                     </div>
                                 </div>
                                 <button
