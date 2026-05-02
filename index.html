@@ -894,9 +894,8 @@
 
             return (
                 <div className="att-table-shell overflow-hidden">
-                    <div className="flex items-start gap-1.5 px-2 py-2.5 border-b border-black/[0.06] bg-[rgba(250,248,244,0.9)]">
-                        <button type="button" className="att-arrow-btn shrink-0 mt-2" aria-label="Назад" disabled={edge.start} onClick={() => scrollByDir(-1)}>‹</button>
-                        <div className="flex flex-1 min-w-0 items-stretch">
+                    <div className="flex items-stretch px-2 py-2.5 border-b border-black/[0.06] bg-[rgba(250,248,244,0.9)]">
+                        <div className="flex flex-1 min-w-0 min-h-0 items-stretch">
                             <div
                                 className="shrink-0 flex flex-col bg-white border-r border-stone-200/70"
                                 style={{ width: ATT_LEFT_COL, minWidth: ATT_LEFT_COL }}
@@ -920,38 +919,59 @@
                                     );
                                 })}
                             </div>
-                            <div ref={scrollRef} className="att-scroll-x att-lesson-scroll flex-1 min-w-0 overflow-x-auto bg-white" onScroll={updateEdges}>
-                                <div className="inline-flex flex-col" style={{ minWidth: contentMin }}>
-                                    <div className="flex items-stretch min-h-[68px] border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)]">
-                                        {columns.map((c) => (
-                                            <div key={c.id} className="flex flex-col items-center justify-center text-center border-l border-stone-200/50 first:border-l-0 px-1 py-2" style={cellStyle}>
-                                                <span className="text-[13px] font-semibold leading-tight line-clamp-2" style={{ color: 'var(--text-primary)' }}>{c.title}</span>
-                                                <span className="text-[12px] mt-0.5 tabular-nums" style={{ color: 'var(--text-secondary)' }}>{formatDateShort(c.date)}</span>
+                            <div className="relative flex-1 min-w-0 min-h-0 bg-white">
+                                <div ref={scrollRef} className="att-scroll-x att-lesson-scroll h-full min-h-0 flex-1 min-w-0 overflow-x-auto" onScroll={updateEdges}>
+                                    <div className="inline-flex flex-col" style={{ minWidth: contentMin }}>
+                                        <div className="flex items-stretch min-h-[68px] border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)]">
+                                            {columns.map((c) => (
+                                                <div key={c.id} className="flex flex-col items-center justify-center text-center border-l border-stone-200/50 first:border-l-0 px-1 py-2" style={cellStyle}>
+                                                    <span className="text-[13px] font-semibold leading-tight line-clamp-2" style={{ color: 'var(--text-primary)' }}>{c.title}</span>
+                                                    <span className="text-[12px] mt-0.5 tabular-nums" style={{ color: 'var(--text-secondary)' }}>{formatDateShort(c.date)}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {students.map((s) => (
+                                            <div key={s.id} className="flex items-stretch min-h-[76px] border-b border-stone-100 last:border-b-0 bg-white">
+                                                {columns.map((c) => {
+                                                    const v = s.attendance?.[c.id] ?? 0;
+                                                    return (
+                                                        <button
+                                                            key={c.id}
+                                                            type="button"
+                                                            onClick={(e) => { e.stopPropagation(); onCellTap(s, c.id); }}
+                                                            className="visit-cell-btn flex items-center justify-center border-l border-stone-200/45 first:border-l-0 bg-white"
+                                                            style={{ ...cellStyle, WebkitTapHighlightColor: 'transparent' }}
+                                                        >
+                                                            {visitMarkNode(v, `${s.id}-${c.id}`)}
+                                                        </button>
+                                                    );
+                                                })}
                                             </div>
                                         ))}
                                     </div>
-                                    {students.map((s) => (
-                                        <div key={s.id} className="flex items-stretch min-h-[76px] border-b border-stone-100 last:border-b-0 bg-white">
-                                            {columns.map((c) => {
-                                                const v = s.attendance?.[c.id] ?? 0;
-                                                return (
-                                                    <button
-                                                        key={c.id}
-                                                        type="button"
-                                                        onClick={(e) => { e.stopPropagation(); onCellTap(s, c.id); }}
-                                                        className="visit-cell-btn flex items-center justify-center border-l border-stone-200/45 first:border-l-0 bg-white"
-                                                        style={{ ...cellStyle, WebkitTapHighlightColor: 'transparent' }}
-                                                    >
-                                                        {visitMarkNode(v, `${s.id}-${c.id}`)}
-                                                    </button>
-                                                );
-                                            })}
-                                        </div>
-                                    ))}
                                 </div>
+                                <button
+                                    type="button"
+                                    className="att-arrow-btn absolute left-2 z-30 pointer-events-auto"
+                                    style={{ top: '34px', transform: 'translateY(-50%)' }}
+                                    aria-label="Назад"
+                                    disabled={edge.start}
+                                    onClick={() => scrollByDir(-1)}
+                                >
+                                    ‹
+                                </button>
+                                <button
+                                    type="button"
+                                    className="att-arrow-btn absolute right-2 z-30 pointer-events-auto"
+                                    style={{ top: '34px', transform: 'translateY(-50%)' }}
+                                    aria-label="Вперёд"
+                                    disabled={edge.end}
+                                    onClick={() => scrollByDir(1)}
+                                >
+                                    ›
+                                </button>
                             </div>
                         </div>
-                        <button type="button" className="att-arrow-btn shrink-0 mt-2" aria-label="Вперёд" disabled={edge.end} onClick={() => scrollByDir(1)}>›</button>
                     </div>
                 </div>
             );
