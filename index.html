@@ -15,36 +15,94 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
-        html, body { margin: 0; font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background: #f8f9fa; }
+        :root {
+            --app-bg: #F7F8FA;
+            --card-bg: #FFFFFF;
+            --text-primary: #1C1C1E;
+            --text-secondary: #8E8E93;
+            --visit-yes: #34C759;
+            --visit-no: #FF3B30;
+            --visit-dash: #D1D1D6;
+            --tap-transition: transform 0.2s ease, color 0.2s ease, background-color 0.2s ease, opacity 0.2s ease;
+        }
+        html, body {
+            margin: 0;
+            font-family: system-ui, -apple-system, "Inter", "Segoe UI", Roboto, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+            background: var(--app-bg);
+            color: var(--text-primary);
+            font-size: 16px;
+            line-height: 1.45;
+            -webkit-font-smoothing: antialiased;
+        }
         body { min-height: 100dvh; }
         .safe-top { padding-top: env(safe-area-inset-top); }
         .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
         .app-bg {
-            background:
-                radial-gradient(1200px 360px at 50% -180px, rgba(85, 230, 193, 0.14), rgba(248, 249, 250, 0) 66%),
-                linear-gradient(180deg, #fcfdfd 0%, #f8f9fa 78%);
+            background: var(--app-bg);
         }
-        .header-glass { background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(14px); }
+        .header-glass {
+            background: rgba(255, 255, 255, 0.94);
+            backdrop-filter: blur(16px);
+            border-color: rgba(0, 0, 0, 0.06) !important;
+        }
         .active-tab-indicator {
             position: absolute; top: -8px; width: 22px; height: 3px; border-radius: 99px;
             background: #fff; box-shadow: 0 0 10px rgba(255, 255, 255, 0.45);
         }
-        .sheet-shadow { box-shadow: 0 -14px 42px rgba(15, 23, 42, 0.12); }
+        .sheet-shadow { box-shadow: 0 -14px 42px rgba(0, 0, 0, 0.1); }
         .drawer-scroll { -webkit-overflow-scrolling: touch; }
-        /* Левая колонка ФИО + статус — закреплена при горизонтальном скролле занятий */
+        .student-row-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+            transition: var(--tap-transition);
+        }
+        .student-row-card:active {
+            transform: scale(0.98);
+        }
         .att-sticky-left {
             position: sticky; left: 0; z-index: 2;
-            background: linear-gradient(90deg, #fff 92%, rgba(255,255,255,0) 100%);
-            box-shadow: 4px 0 12px rgba(15, 23, 42, 0.06);
+            background: linear-gradient(90deg, #fff 88%, rgba(255,255,255,0) 100%);
+            box-shadow: 6px 0 14px rgba(0, 0, 0, 0.04);
         }
         .att-scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .visit-mark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            font-size: 1.125rem;
+            font-weight: 700;
+            transition: var(--tap-transition);
+        }
+        .visit-mark--yes { color: var(--visit-yes); }
+        .visit-mark--no { color: var(--visit-no); }
+        .visit-mark--dash { color: var(--visit-dash); font-weight: 500; }
+        .visit-cell-btn {
+            transition: var(--tap-transition);
+        }
+        .visit-cell-btn:active {
+            transform: scale(0.92);
+            opacity: 0.85;
+        }
+        .lesson-header-card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        }
     </style>
 </head>
 <body class="safe-bottom">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useMemo, useState, useEffect, useCallback } = React;
+        const { useMemo, useState, useEffect, useCallback, useRef } = React;
 
         const STORAGE_KEY = '2face_v4_final';
         const LEGACY_KEYS = ['2face_students_final', '2face_subjects_final'];
@@ -127,11 +185,12 @@
             return ((Number(v) || 0) + 1) % 3;
         }
 
-        function visitChar(v) {
+        /** Отображение посещения: цвета через CSS-классы (не emoji — стабильнее на iOS) */
+        function visitMarkNode(v) {
             const n = Number(v) || 0;
-            if (n === 1) return '✅';
-            if (n === 2) return '❌';
-            return '—';
+            if (n === 1) return <span className="visit-mark visit-mark--yes">✓</span>;
+            if (n === 2) return <span className="visit-mark visit-mark--no">✕</span>;
+            return <span className="visit-mark visit-mark--dash">—</span>;
         }
 
         function defaultLessonColumnsForCategory(categoryId, subjectTitles) {
@@ -292,14 +351,23 @@
             }
         }
 
+        /**
+         * Сохранение всего состояния в localStorage (ученики, посещения, payments внутри students, колонки занятий, справочник предметов).
+         * Вызывается при любом изменении данных и при закрытии вкладки (beforeunload).
+         */
         function saveAppState(students, subjects, lessonColumnsByCategory) {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify({
-                version: 7,
-                updatedAt: new Date().toISOString(),
-                students,
-                subjects,
-                lessonColumnsByCategory
-            }));
+            try {
+                const payload = {
+                    version: 7,
+                    updatedAt: new Date().toISOString(),
+                    students,
+                    subjects,
+                    lessonColumnsByCategory
+                };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+            } catch (e) {
+                console.warn('2FACE: не удалось сохранить в localStorage', e);
+            }
         }
 
         function setupPwaManifest() {
@@ -311,7 +379,7 @@
                 start_url: './index.html',
                 scope: './',
                 display: 'standalone',
-                background_color: '#F8F9FA',
+                background_color: '#F7F8FA',
                 theme_color: '#1E272E',
                 icons: [{
                     src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect fill='%231E272E' width='192' height='192' rx='40'/%3E%3Ctext x='96' y='118' font-size='72' text-anchor='middle' fill='%2355E6C1'%3E2%3C/text%3E%3C/svg%3E",
@@ -540,43 +608,40 @@
             );
         }
 
-        /** Таблица: слева ФИО + статус, справа — горизонтальный скролл посещений */
+        /** Список: одна горизонтальная прокрутка для шапки и строк; каждая строка — карточка */
         function AttendanceTable({ students, columns, onCellTap, onRowOpen }) {
-            const colw = 'min-w-[76px] w-[76px]';
+            const colw = 'min-w-[80px] w-[80px] shrink-0';
+            const leftCol = 'shrink-0 w-[148px] sm:w-[168px]';
             return (
-                <div className="rounded-2xl border border-slate-200/90 bg-white overflow-hidden shadow-sm">
-                    <div className="flex">
-                        <div className="att-sticky-left shrink-0 w-[140px] sm:w-[160px] border-r border-slate-100">
-                            <div className="h-[72px] border-b border-slate-100 bg-slate-50 px-2 py-2 flex flex-col justify-center">
-                                <span className="text-[10px] font-bold text-slate-500 uppercase">Ученик</span>
+                <div className="att-scroll-x -mx-1 px-1">
+                    <div className="inline-flex min-w-full flex-col gap-0 pb-1">
+                        <div className="lesson-header-card flex w-max min-w-full items-stretch">
+                            <div className={`${leftCol} pr-2 flex items-center att-sticky-left`}>
+                                <span className="text-[13px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-secondary)' }}>Ученик</span>
                             </div>
-                            {students.map((s) => {
-                                const st = abonnementStatusLine(s);
-                                return (
+                            <div className="flex min-h-[52px]">
+                                {columns.map((c) => (
+                                    <div key={c.id} className={`${colw} px-1 flex flex-col items-center justify-center text-center border-l border-black/[0.04] first:border-l-0`}>
+                                        <span className="text-[14px] font-semibold leading-snug line-clamp-2" style={{ color: 'var(--text-primary)' }}>{c.title}</span>
+                                        <span className="text-[13px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>{formatDateShort(c.date)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                        {students.map((s) => {
+                            const st = abonnementStatusLine(s);
+                            return (
+                                <div key={s.id} className="student-row-card flex w-max min-w-full items-stretch">
                                     <button
-                                        key={s.id}
                                         type="button"
                                         onClick={() => onRowOpen(s)}
-                                        className="w-full text-left h-[72px] border-b border-slate-100 px-2 py-2 flex flex-col justify-center active:bg-slate-50"
+                                        className={`att-sticky-left ${leftCol} text-left rounded-l-[10px] -m-[2px] mr-0 p-1 pr-2 border-0 bg-transparent self-center`}
+                                        style={{ WebkitTapHighlightColor: 'transparent' }}
                                     >
-                                        <span className="text-[13px] font-semibold text-[#1E272E] leading-tight line-clamp-2">{s.name}</span>
-                                        <span className={`text-[11px] mt-1 font-medium ${st.ok ? 'text-emerald-700' : 'text-rose-600'}`}>{st.text}</span>
+                                        <span className="text-[17px] font-semibold leading-snug line-clamp-2 block" style={{ color: 'var(--text-primary)' }}>{s.name}</span>
+                                        <span className="text-[13px] mt-1 block font-medium" style={{ color: st.ok ? 'var(--text-secondary)' : '#FF3B30' }}>{st.text}</span>
                                     </button>
-                                );
-                            })}
-                        </div>
-                        <div className="att-scroll-x flex-1 min-w-0">
-                            <div className="inline-flex min-w-full flex-col">
-                                <div className="flex h-[72px] border-b border-slate-100 bg-slate-50">
-                                    {columns.map((c) => (
-                                        <div key={c.id} className={`${colw} shrink-0 border-r border-slate-100 px-1 py-2 flex flex-col items-center justify-center text-center`}>
-                                            <span className="text-[10px] font-bold text-[#1E272E] leading-tight line-clamp-2">{c.title}</span>
-                                            <span className="text-[9px] text-slate-500 mt-0.5">{formatDateShort(c.date)}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                                {students.map((s) => (
-                                    <div key={s.id} className="flex h-[72px] border-b border-slate-100 last:border-b-0">
+                                    <div className="flex min-h-[56px]">
                                         {columns.map((c) => {
                                             const v = s.attendance?.[c.id] ?? 0;
                                             return (
@@ -584,16 +649,17 @@
                                                     key={c.id}
                                                     type="button"
                                                     onClick={(e) => { e.stopPropagation(); onCellTap(s, c.id); }}
-                                                    className={`${colw} shrink-0 border-r border-slate-100 flex items-center justify-center text-lg active:bg-slate-100`}
+                                                    className={`visit-cell-btn ${colw} flex items-center justify-center border-l border-black/[0.04] first:border-l-0 rounded-r-md`}
+                                                    style={{ WebkitTapHighlightColor: 'transparent' }}
                                                 >
-                                                    {visitChar(v)}
+                                                    {visitMarkNode(v)}
                                                 </button>
                                             );
                                         })}
                                     </div>
-                                ))}
-                            </div>
-                        </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
             );
@@ -612,9 +678,26 @@
             const [columnsEditorOpen, setColumnsEditorOpen] = useState(false);
 
             useEffect(() => { setupPwaManifest(); }, []);
+
+            const persistRef = useRef({ students, subjects, lessonColumnsByCategory });
+            persistRef.current = { students, subjects, lessonColumnsByCategory };
+
             useEffect(() => {
                 saveAppState(students, subjects, lessonColumnsByCategory);
             }, [students, subjects, lessonColumnsByCategory]);
+
+            useEffect(() => {
+                const flush = () => {
+                    const p = persistRef.current;
+                    saveAppState(p.students, p.subjects, p.lessonColumnsByCategory);
+                };
+                window.addEventListener('pagehide', flush);
+                window.addEventListener('beforeunload', flush);
+                return () => {
+                    window.removeEventListener('pagehide', flush);
+                    window.removeEventListener('beforeunload', flush);
+                };
+            }, []);
 
             const filtered = useMemo(() => {
                 const q = query.trim().toLowerCase();
@@ -675,19 +758,19 @@
             const sheetStudent = sheetStudentId ? students.find((s) => s.id === sheetStudentId) : null;
 
             return (
-                <div className="app-bg min-h-screen min-h-[100dvh] max-w-lg mx-auto text-[#1E272E]">
-                    <header className="sticky top-0 z-40 safe-top header-glass border-b border-white/80">
+                <div className="app-bg min-h-screen min-h-[100dvh] max-w-lg mx-auto" style={{ color: 'var(--text-primary)' }}>
+                    <header className="sticky top-0 z-40 safe-top header-glass border-b">
                         <div className="px-3 pt-3 pb-3">
                             <div className="flex items-center justify-between gap-2">
                                 <div>
-                                    <h1 className="text-xl font-black tracking-tight leading-none">2FACE</h1>
-                                    <p className="mt-0.5 text-[10px] uppercase tracking-[0.14em] font-semibold text-slate-500">
+                                    <h1 className="text-[19px] font-bold tracking-tight leading-none">2FACE</h1>
+                                    <p className="mt-1 text-[13px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-secondary)' }}>
                                         {CATEGORIES.find((c) => c.id === activeTab)?.label}
                                     </p>
                                 </div>
-                                <div className="flex gap-1.5">
-                                    <button type="button" onClick={() => setColumnsEditorOpen(true)} className="h-9 px-2.5 rounded-xl bg-slate-100 text-slate-700 text-[10px] font-bold">Занятия</button>
-                                    <button type="button" onClick={() => setStudentFormOpen(true)} className="h-9 px-2.5 rounded-xl bg-[#1E272E] text-white text-[10px] font-bold">+ Ученик</button>
+                                <div className="flex gap-1.5 transition-[transform,opacity] duration-200 ease-out">
+                                    <button type="button" onClick={() => setColumnsEditorOpen(true)} className="h-9 px-2.5 rounded-xl text-[13px] font-semibold active:scale-[0.97] transition-transform duration-200 ease-out" style={{ background: 'rgba(0,0,0,0.06)', color: 'var(--text-primary)' }}>Занятия</button>
+                                    <button type="button" onClick={() => setStudentFormOpen(true)} className="h-9 px-2.5 rounded-xl bg-[#1C1C1E] text-white text-[13px] font-semibold active:scale-[0.97] transition-transform duration-200 ease-out">+ Ученик</button>
                                 </div>
                             </div>
                             <input
@@ -695,14 +778,15 @@
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
                                 placeholder="Поиск ученика"
-                                className="mt-3 h-10 w-full rounded-xl bg-slate-100 px-3 text-sm outline-none focus:ring-2 focus:ring-[#55E6C1]"
+                                className="mt-3 h-11 w-full rounded-[12px] px-3 text-[16px] outline-none transition-shadow duration-200 ease-out border border-black/[0.06] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.04)] focus:ring-2 focus:ring-[#34C759]/40"
+                                style={{ color: 'var(--text-primary)' }}
                             />
                         </div>
                     </header>
 
                     <main className="px-2 py-3 pb-28">
                         {filtered.length === 0 ? (
-                            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600">
+                            <div className="rounded-[12px] bg-white p-8 text-center text-[16px] shadow-[0_2px_8px_rgba(0,0,0,0.04)]" style={{ color: 'var(--text-secondary)' }}>
                                 Нет учеников. Нажмите «+ Ученик».
                             </div>
                         ) : (
