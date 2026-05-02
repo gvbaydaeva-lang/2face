@@ -844,37 +844,28 @@
             );
         }
 
-        /** Узкая фиксированная колонка «Ученик»; ширина колонок занятий считается отдельно под 4 колонки в видимой области. */
+        /** Узкая фиксированная колонка «Ученик»; справа — окно ровно на 4 занятия (ширина колонки = окно / 4). */
         const ATT_LEFT_COL = 128;
+        const ATT_ARROW_RAIL = 28;
 
-        /** Слева — фиксированная колонка (не в скролле); справа — один общий горизонтальный скролл шапки и ячеек. */
+        /** Слева — фиксированная колонка (не в скролле); справа — узкие рельсы стрелок + окно с одним скроллом шапки и ячеек. */
         function AttendanceTable({ students, columns, onCellTap, onRowOpen }) {
-            const rightSlotRef = useRef(null);
+            const viewportRef = useRef(null);
             const scrollRef = useRef(null);
-            /** Суммарная ширина четырёх колонок занятий (контент без горизонтальных паддингов скролла), кратна 4 px. */
-            const [lessonInnerPx, setLessonInnerPx] = useState(0);
-            /** Ширина обёртки скролла = lessonInnerPx + паддинги; не шире слота — без «хвоста» 5-й колонки. */
-            const [scrollOuterPx, setScrollOuterPx] = useState(0);
+            /** Ширина окна занятий (между стрелками): colW = viewportW / 4, ровно 4 колонки в портрете без сжатия. */
+            const [viewportW, setViewportW] = useState(0);
             const [edge, setEdge] = useState({ start: true, end: true });
 
             const columnsSig = useMemo(() => columns.map((c) => `${c.id}:${c.date}`).join('|'), [columns]);
 
-            const colW = lessonInnerPx >= 8 ? lessonInnerPx / 4 : 84;
+            const colW = viewportW >= 16 ? viewportW / 4 : 84;
 
             const measure = useCallback(() => {
-                const slot = rightSlotRef.current;
-                const sc = scrollRef.current;
-                if (!slot || !sc) return;
-                const W = Math.floor(slot.getBoundingClientRect().width);
-                if (W < 32) return;
-                const cs = getComputedStyle(sc);
-                const pl = parseFloat(cs.paddingLeft) || 0;
-                const pr = parseFloat(cs.paddingRight) || 0;
-                const innerBudget = Math.max(0, W - pl - pr);
-                const fourInner = Math.max(4, Math.floor(innerBudget / 4) * 4);
-                const outer = fourInner + pl + pr;
-                setLessonInnerPx(fourInner);
-                setScrollOuterPx(Math.min(W, outer));
+                const vp = viewportRef.current;
+                if (!vp) return;
+                const W = Math.floor(vp.getBoundingClientRect().width);
+                if (W < 16) return;
+                setViewportW(W);
             }, []);
 
             useLayoutEffect(() => {
@@ -882,7 +873,7 @@
             }, [measure, columnsSig, students.length]);
 
             useEffect(() => {
-                const el = rightSlotRef.current;
+                const el = viewportRef.current;
                 if (!el || typeof ResizeObserver === 'undefined') return;
                 const ro = new ResizeObserver(() => measure());
                 ro.observe(el);
@@ -905,7 +896,7 @@
             /** Смена списка занятий / учеников → в конец (последние 4). Смена только ширины → clamp без сдвига к концу. */
             useLayoutEffect(() => {
                 const el = scrollRef.current;
-                if (!el || lessonInnerPx < 8) return;
+                if (!el || viewportW < 16) return;
                 const sig = `${columnsSig}|${students.length}`;
                 requestAnimationFrame(() => {
                     requestAnimationFrame(() => {
@@ -919,7 +910,7 @@
                         updateEdges();
                     });
                 });
-            }, [columnsSig, students.length, lessonInnerPx, scrollOuterPx, updateEdges]);
+            }, [columnsSig, students.length, viewportW, updateEdges]);
 
             useEffect(() => {
                 const el = scrollRef.current;
@@ -927,14 +918,14 @@
                 updateEdges();
                 el.addEventListener('scroll', updateEdges, { passive: true });
                 return () => el.removeEventListener('scroll', updateEdges);
-            }, [columnsSig, updateEdges, colW, lessonInnerPx, scrollOuterPx]);
+            }, [columnsSig, updateEdges, colW, viewportW]);
 
             const scrollByDir = useCallback((dir) => {
                 const el = scrollRef.current;
                 if (!el) return;
-                const step = 4 * colW;
+                const step = viewportW >= 16 ? viewportW : 4 * colW;
                 el.scrollBy({ left: dir * step, behavior: 'smooth' });
-            }, [colW]);
+            }, [colW, viewportW]);
 
             const contentMin = Math.max(columns.length * colW, 1);
             const cellStyle = {
@@ -942,8 +933,10 @@
                 minWidth: colW,
                 maxWidth: colW,
                 flex: `0 0 ${colW}px`,
+                flexGrow: 0,
+                flexShrink: 0,
                 boxSizing: 'border-box',
-                flexShrink: 0
+                overflow: 'hidden'
             };
 
             return (
@@ -973,18 +966,26 @@
                                     );
                                 })}
                             </div>
-                            <div ref={rightSlotRef} className="relative flex-1 min-w-0 min-h-0 bg-white overflow-hidden flex justify-start items-stretch">
-                                <div
-                                    className="relative h-full min-h-0 min-w-0 overflow-hidden shrink-0"
-                                    style={{ width: scrollOuterPx > 8 ? scrollOuterPx : '100%', maxWidth: '100%' }}
-                                >
-                                    <div ref={scrollRef} className="att-scroll-x att-lesson-scroll absolute inset-0 overflow-x-auto overflow-y-hidden px-6 box-border" onScroll={updateEdges}>
+                            <div className="flex flex-1 min-w-0 min-h-0 bg-white flex-row items-stretch overflow-hidden">
+                                <div className="flex shrink-0 flex-col items-center justify-start pt-[26px] z-20" style={{ width: ATT_ARROW_RAIL, minWidth: ATT_ARROW_RAIL }}>
+                                    <button
+                                        type="button"
+                                        className="att-arrow-btn pointer-events-auto"
+                                        aria-label="Назад"
+                                        disabled={edge.start}
+                                        onClick={() => scrollByDir(-1)}
+                                    >
+                                        ‹
+                                    </button>
+                                </div>
+                                <div ref={viewportRef} className="relative flex-1 min-w-0 min-h-0 overflow-hidden">
+                                    <div ref={scrollRef} className="att-scroll-x att-lesson-scroll absolute inset-0 overflow-x-auto overflow-y-hidden" onScroll={updateEdges}>
                                         <div className="flex flex-col shrink-0" style={{ width: contentMin, minWidth: contentMin }}>
                                             <div className="flex flex-row flex-nowrap items-stretch min-h-[68px] border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)] shrink-0" style={{ width: contentMin, minWidth: contentMin }}>
                                             {columns.map((c) => (
                                                 <div key={c.id} className="flex flex-col items-center justify-center text-center border-l border-stone-200/50 first:border-l-0 px-0.5 py-1.5 overflow-hidden shrink-0" style={cellStyle}>
-                                                    <span className="text-[13px] font-semibold leading-none truncate block w-full max-w-full" style={{ color: 'var(--text-primary)' }} title={c.title}>{c.title}</span>
-                                                    <span className="text-[12px] mt-0.5 tabular-nums leading-none truncate block w-full max-w-full" style={{ color: 'var(--text-secondary)' }}>{formatDateShort(c.date)}</span>
+                                                    <span className="text-[13px] font-semibold leading-none truncate block w-full min-w-0" style={{ color: 'var(--text-primary)' }} title={c.title}>{c.title}</span>
+                                                    <span className="text-[12px] mt-0.5 tabular-nums leading-none truncate block w-full min-w-0" style={{ color: 'var(--text-secondary)' }}>{formatDateShort(c.date)}</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -997,7 +998,7 @@
                                                             key={c.id}
                                                             type="button"
                                                             onClick={(e) => { e.stopPropagation(); onCellTap(s, c.id); }}
-                                                            className="visit-cell-btn flex items-center justify-center border-l border-stone-200/45 first:border-l-0 bg-white"
+                                                            className="visit-cell-btn flex items-center justify-center border-l border-stone-200/45 first:border-l-0 bg-white overflow-hidden"
                                                             style={{ ...cellStyle, WebkitTapHighlightColor: 'transparent' }}
                                                         >
                                                             {visitMarkNode(v, `${s.id}-${c.id}`)}
@@ -1009,24 +1010,17 @@
                                         </div>
                                     </div>
                                 </div>
-                                <button
-                                    type="button"
-                                    className="att-arrow-btn absolute left-3 top-[34px] z-30 pointer-events-auto -translate-y-1/2"
-                                    aria-label="Назад"
-                                    disabled={edge.start}
-                                    onClick={() => scrollByDir(-1)}
-                                >
-                                    ‹
-                                </button>
-                                <button
-                                    type="button"
-                                    className="att-arrow-btn absolute right-3 top-[34px] z-30 pointer-events-auto -translate-y-1/2"
-                                    aria-label="Вперёд"
-                                    disabled={edge.end}
-                                    onClick={() => scrollByDir(1)}
-                                >
-                                    ›
-                                </button>
+                                <div className="flex shrink-0 flex-col items-center justify-start pt-[26px] z-20" style={{ width: ATT_ARROW_RAIL, minWidth: ATT_ARROW_RAIL }}>
+                                    <button
+                                        type="button"
+                                        className="att-arrow-btn pointer-events-auto"
+                                        aria-label="Вперёд"
+                                        disabled={edge.end}
+                                        onClick={() => scrollByDir(1)}
+                                    >
+                                        ›
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
