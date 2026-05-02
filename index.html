@@ -117,7 +117,7 @@
         }
         .att-scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         .att-lesson-scroll {
-            scroll-behavior: smooth;
+            scroll-behavior: auto;
             overscroll-behavior-x: contain;
             scrollbar-width: thin;
         }
@@ -125,19 +125,20 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            width: 36px;
-            min-width: 36px;
+            width: 28px;
+            min-width: 28px;
             border: none;
-            border-radius: 12px;
-            background: rgba(245, 242, 237, 0.95);
+            border-radius: 10px;
+            background: rgba(245, 242, 237, 0.72);
             color: var(--graphite);
-            font-size: 1.25rem;
+            font-size: 1.05rem;
             line-height: 1;
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-            transition: transform 0.18s ease, background 0.2s ease, opacity 0.2s ease;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            opacity: 0.88;
+            transition: opacity 0.15s ease, background 0.15s ease;
         }
         .att-arrow-btn:active {
-            transform: scale(0.94);
+            opacity: 1;
         }
         .att-arrow-btn:disabled {
             opacity: 0.35;
@@ -824,7 +825,9 @@
             );
         }
 
-        const ATT_LEFT_COL = 158;
+        /** Узкая фиксированная колонка «Ученик»; ширина колонок занятий считается отдельно под 4 колонки в видимой области. */
+        const ATT_LEFT_COL = 128;
+        const ATT_LESSON_PAD_X = 48;
 
         /** Слева — фиксированная колонка (не в скролле); справа — один общий горизонтальный скролл шапки и ячеек. */
         function AttendanceTable({ students, columns, onCellTap, onRowOpen }) {
@@ -837,9 +840,10 @@
             const measure = useCallback(() => {
                 const sc = scrollRef.current;
                 if (!sc) return;
-                const inner = sc.clientWidth;
-                const w = Math.max(68, Math.min(96, Math.floor(inner / 4)));
-                setColW(w);
+                const inner = Math.max(0, sc.clientWidth - ATT_LESSON_PAD_X);
+                if (inner < 16) return;
+                const w = Math.floor(inner / 4);
+                setColW(Math.max(48, w));
             }, []);
 
             useLayoutEffect(() => {
@@ -872,7 +876,7 @@
                     el.scrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
                     updateEdges();
                 });
-            }, [columnsSig, students.length, colW, updateEdges]);
+            }, [columnsSig, students.length, updateEdges]);
 
             useEffect(() => {
                 const el = scrollRef.current;
@@ -900,7 +904,7 @@
                                 className="shrink-0 flex flex-col bg-white border-r border-stone-200/70"
                                 style={{ width: ATT_LEFT_COL, minWidth: ATT_LEFT_COL }}
                             >
-                                <div className="flex flex-col justify-center min-h-[68px] pl-3 pr-2 border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)]">
+                                <div className="flex flex-col justify-center min-h-[68px] pl-2 pr-1.5 border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)]">
                                     <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Ученик</span>
                                 </div>
                                 {students.map((s) => {
@@ -910,7 +914,7 @@
                                             key={s.id}
                                             type="button"
                                             onClick={() => onRowOpen(s)}
-                                            className="text-left pl-3 pr-2 py-3 min-h-[76px] flex flex-col justify-center border-b border-stone-100 last:border-b-0 bg-white border-0"
+                                            className="text-left pl-2 pr-1.5 py-2.5 min-h-[76px] flex flex-col justify-center border-b border-stone-100 last:border-b-0 bg-white border-0"
                                             style={{ WebkitTapHighlightColor: 'transparent' }}
                                         >
                                             <span className="text-[17px] font-bold leading-snug line-clamp-2 tracking-tight" style={{ color: 'var(--text-primary)' }}>{s.name}</span>
@@ -920,13 +924,13 @@
                                 })}
                             </div>
                             <div className="relative flex-1 min-w-0 min-h-0 bg-white">
-                                <div ref={scrollRef} className="att-scroll-x att-lesson-scroll h-full min-h-0 flex-1 min-w-0 overflow-x-auto" onScroll={updateEdges}>
+                                <div ref={scrollRef} className="att-scroll-x att-lesson-scroll h-full min-h-0 flex-1 min-w-0 overflow-x-auto px-6 box-border" onScroll={updateEdges}>
                                     <div className="inline-flex flex-col" style={{ minWidth: contentMin }}>
                                         <div className="flex items-stretch min-h-[68px] border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)]">
                                             {columns.map((c) => (
-                                                <div key={c.id} className="flex flex-col items-center justify-center text-center border-l border-stone-200/50 first:border-l-0 px-1 py-2" style={cellStyle}>
-                                                    <span className="text-[13px] font-semibold leading-tight line-clamp-2" style={{ color: 'var(--text-primary)' }}>{c.title}</span>
-                                                    <span className="text-[12px] mt-0.5 tabular-nums" style={{ color: 'var(--text-secondary)' }}>{formatDateShort(c.date)}</span>
+                                                <div key={c.id} className="flex flex-col items-center justify-center text-center border-l border-stone-200/50 first:border-l-0 px-0.5 py-1.5 overflow-hidden shrink-0" style={cellStyle}>
+                                                    <span className="text-[13px] font-semibold leading-none truncate block w-full max-w-full" style={{ color: 'var(--text-primary)' }} title={c.title}>{c.title}</span>
+                                                    <span className="text-[12px] mt-0.5 tabular-nums leading-none truncate block w-full max-w-full" style={{ color: 'var(--text-secondary)' }}>{formatDateShort(c.date)}</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -952,8 +956,7 @@
                                 </div>
                                 <button
                                     type="button"
-                                    className="att-arrow-btn absolute left-2 z-30 pointer-events-auto"
-                                    style={{ top: '34px', transform: 'translateY(-50%)' }}
+                                    className="att-arrow-btn absolute left-3 top-[34px] z-30 pointer-events-auto -translate-y-1/2"
                                     aria-label="Назад"
                                     disabled={edge.start}
                                     onClick={() => scrollByDir(-1)}
@@ -962,8 +965,7 @@
                                 </button>
                                 <button
                                     type="button"
-                                    className="att-arrow-btn absolute right-2 z-30 pointer-events-auto"
-                                    style={{ top: '34px', transform: 'translateY(-50%)' }}
+                                    className="att-arrow-btn absolute right-3 top-[34px] z-30 pointer-events-auto -translate-y-1/2"
                                     aria-label="Вперёд"
                                     disabled={edge.end}
                                     onClick={() => scrollByDir(1)}
