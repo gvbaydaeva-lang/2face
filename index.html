@@ -539,8 +539,12 @@
         }
 
         /** Редактор колонок занятий для текущей вкладки (название + дата) */
-        function LessonColumnsEditor({ columns, onClose, onSave }) {
-            const [rows, setRows] = useState(columns.map((c) => ({ ...c })));
+        function LessonColumnsEditor({ columns, onClose, onSave, onDeleteColumn }) {
+            const [rows, setRows] = useState(() => columns.map((c) => ({ ...c })));
+            const columnsSyncKey = useMemo(() => columns.map((c) => `${c.id}:${c.title}:${c.date}`).join('|'), [columns]);
+            useEffect(() => {
+                setRows(columns.map((c) => ({ ...c })));
+            }, [columnsSyncKey, columns]);
             return (
                 <div className="fixed inset-0 z-[80]">
                     <div className="absolute inset-0 bg-black/40" onClick={onClose} />
@@ -550,7 +554,7 @@
                         <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>Общие колонки для всех учеников на этой вкладке.</p>
                         <div className="mt-3 space-y-2">
                             {rows.map((r, i) => (
-                                <div key={r.id} className="flex flex-col gap-1 sm:flex-row sm:items-center">
+                                <div key={r.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
                                     <input
                                         value={r.title}
                                         onChange={(e) => setRows((prev) => prev.map((x, j) => j === i ? { ...x, title: e.target.value } : x))}
@@ -563,6 +567,21 @@
                                         onChange={(e) => setRows((prev) => prev.map((x, j) => j === i ? { ...x, date: e.target.value } : x))}
                                         className="h-10 w-full sm:w-[150px] rounded-xl bg-stone-100/90 px-2 text-sm outline-none focus:ring-2 focus:ring-[var(--accent)]/40"
                                     />
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (rows.length <= 1) {
+                                                alert('Нельзя удалить последнее занятие: нужна хотя бы одна колонка.');
+                                                return;
+                                            }
+                                            if (!confirm('Удалить занятие? Все отметки посещений по этому занятию тоже будут удалены.')) return;
+                                            onDeleteColumn(r.id);
+                                        }}
+                                        className="btn-press h-10 shrink-0 rounded-xl px-3 text-[13px] font-semibold"
+                                        style={{ background: 'rgba(214, 90, 90, 0.12)', color: '#B54545' }}
+                                    >
+                                        Удалить
+                                    </button>
                                 </div>
                             ))}
                         </div>
@@ -830,10 +849,12 @@
 
         /** Слева — фиксированная колонка (не в скролле); справа — один общий горизонтальный скролл шапки и ячеек. */
         function AttendanceTable({ students, columns, onCellTap, onRowOpen }) {
-            const measureRef = useRef(null);
+            const rightSlotRef = useRef(null);
             const scrollRef = useRef(null);
-            /** Целая ширина области под 4 колонки (между горизонтальными паддингами скролла). */
+            /** Суммарная ширина четырёх колонок занятий (контент без горизонтальных паддингов скролла), кратна 4 px. */
             const [lessonInnerPx, setLessonInnerPx] = useState(0);
+            /** Ширина обёртки скролла = lessonInnerPx + паддинги; не шире слота — без «хвоста» 5-й колонки. */
+            const [scrollOuterPx, setScrollOuterPx] = useState(0);
             const [edge, setEdge] = useState({ start: true, end: true });
 
             const columnsSig = useMemo(() => columns.map((c) => `${c.id}:${c.date}`).join('|'), [columns]);
@@ -841,15 +862,19 @@
             const colW = lessonInnerPx >= 8 ? lessonInnerPx / 4 : 84;
 
             const measure = useCallback(() => {
-                const outer = measureRef.current;
+                const slot = rightSlotRef.current;
                 const sc = scrollRef.current;
-                if (!outer || !sc) return;
+                if (!slot || !sc) return;
+                const W = Math.floor(slot.getBoundingClientRect().width);
+                if (W < 32) return;
                 const cs = getComputedStyle(sc);
                 const pl = parseFloat(cs.paddingLeft) || 0;
                 const pr = parseFloat(cs.paddingRight) || 0;
-                const inner = Math.floor(Math.max(0, sc.clientWidth - pl - pr));
-                if (inner < 8) return;
-                setLessonInnerPx(inner);
+                const innerBudget = Math.max(0, W - pl - pr);
+                const fourInner = Math.max(4, Math.floor(innerBudget / 4) * 4);
+                const outer = fourInner + pl + pr;
+                setLessonInnerPx(fourInner);
+                setScrollOuterPx(Math.min(W, outer));
             }, []);
 
             useLayoutEffect(() => {
@@ -857,7 +882,7 @@
             }, [measure, columnsSig, students.length]);
 
             useEffect(() => {
-                const el = measureRef.current;
+                const el = rightSlotRef.current;
                 if (!el || typeof ResizeObserver === 'undefined') return;
                 const ro = new ResizeObserver(() => measure());
                 ro.observe(el);
@@ -894,7 +919,7 @@
                         updateEdges();
                     });
                 });
-            }, [columnsSig, students.length, lessonInnerPx, updateEdges]);
+            }, [columnsSig, students.length, lessonInnerPx, scrollOuterPx, updateEdges]);
 
             useEffect(() => {
                 const el = scrollRef.current;
@@ -902,7 +927,7 @@
                 updateEdges();
                 el.addEventListener('scroll', updateEdges, { passive: true });
                 return () => el.removeEventListener('scroll', updateEdges);
-            }, [columnsSig, updateEdges, colW, lessonInnerPx]);
+            }, [columnsSig, updateEdges, colW, lessonInnerPx, scrollOuterPx]);
 
             const scrollByDir = useCallback((dir) => {
                 const el = scrollRef.current;
@@ -948,8 +973,11 @@
                                     );
                                 })}
                             </div>
-                            <div className="relative flex-1 min-w-0 min-h-0 bg-white overflow-hidden">
-                                <div ref={measureRef} className="absolute inset-0 min-w-0 overflow-hidden">
+                            <div ref={rightSlotRef} className="relative flex-1 min-w-0 min-h-0 bg-white overflow-hidden flex justify-start items-stretch">
+                                <div
+                                    className="relative h-full min-h-0 min-w-0 overflow-hidden shrink-0"
+                                    style={{ width: scrollOuterPx > 8 ? scrollOuterPx : '100%', maxWidth: '100%' }}
+                                >
                                     <div ref={scrollRef} className="att-scroll-x att-lesson-scroll absolute inset-0 overflow-x-auto overflow-y-hidden px-6 box-border" onScroll={updateEdges}>
                                         <div className="flex flex-col shrink-0" style={{ width: contentMin, minWidth: contentMin }}>
                                             <div className="flex flex-row flex-nowrap items-stretch min-h-[68px] border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)] shrink-0" style={{ width: contentMin, minWidth: contentMin }}>
@@ -1146,6 +1174,19 @@
                 setAddLessonOpen(false);
             }, [activeTab]);
 
+            const deleteLessonColumn = useCallback((columnId) => {
+                const list = lessonColumnsByCategory[activeTab] || [];
+                if (list.length <= 1) return;
+                setLessonColumnsByCategory((prev) => ({ ...prev, [activeTab]: (prev[activeTab] || []).filter((c) => c.id !== columnId) }));
+                setStudents((prev) => prev.map((s) => {
+                    if (s.category !== activeTab) return s;
+                    if (!s.attendance || !Object.prototype.hasOwnProperty.call(s.attendance, columnId)) return s;
+                    const att = { ...s.attendance };
+                    delete att[columnId];
+                    return normalizeStudent({ ...s, attendance: att }, subjects);
+                }));
+            }, [activeTab, subjects, lessonColumnsByCategory]);
+
             const sheetStudent = sheetStudentId ? students.find((s) => s.id === sheetStudentId) : null;
 
             return (
@@ -1249,6 +1290,7 @@
                         <LessonColumnsEditor
                             columns={columns}
                             onClose={() => setColumnsEditorOpen(false)}
+                            onDeleteColumn={deleteLessonColumn}
                             onSave={(next) => {
                                 const safe = next.length ? next : defaultLessonColumnsForCategory(activeTab, subjects);
                                 setLessonColumnsByCategory((prev) => ({ ...prev, [activeTab]: safe }));
