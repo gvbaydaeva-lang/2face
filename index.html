@@ -826,9 +826,8 @@
 
         const ATT_LEFT_COL = 158;
 
-        /** Одна горизонтальная прокрутка: шапка занятий и строки учеников синхронно; слева ФИО закреплено. */
+        /** Слева — фиксированная колонка (не в скролле); справа — один общий горизонтальный скролл шапки и ячеек. */
         function AttendanceTable({ students, columns, onCellTap, onRowOpen }) {
-            const wrapRef = useRef(null);
             const scrollRef = useRef(null);
             const [colW, setColW] = useState(84);
             const [edge, setEdge] = useState({ start: true, end: true });
@@ -839,7 +838,7 @@
                 const sc = scrollRef.current;
                 if (!sc) return;
                 const inner = sc.clientWidth;
-                const w = Math.max(68, Math.min(96, Math.floor((inner - ATT_LEFT_COL) / 4)));
+                const w = Math.max(68, Math.min(96, Math.floor(inner / 4)));
                 setColW(w);
             }, []);
 
@@ -848,10 +847,10 @@
             }, [measure, columnsSig, students.length]);
 
             useEffect(() => {
-                const wr = wrapRef.current;
-                if (!wr || typeof ResizeObserver === 'undefined') return;
+                const sc = scrollRef.current;
+                if (!sc || typeof ResizeObserver === 'undefined') return;
                 const ro = new ResizeObserver(() => measure());
-                ro.observe(wr);
+                ro.observe(sc);
                 return () => ro.disconnect();
             }, [measure]);
 
@@ -890,64 +889,65 @@
                 el.scrollBy({ left: dir * step, behavior: 'smooth' });
             }, [colW]);
 
-            const contentMin = ATT_LEFT_COL + columns.length * colW;
+            const contentMin = Math.max(columns.length * colW, 1);
             const cellStyle = { width: colW, minWidth: colW, flex: '0 0 auto' };
 
             return (
                 <div className="att-table-shell overflow-hidden">
                     <div className="flex items-start gap-1.5 px-2 py-2.5 border-b border-black/[0.06] bg-[rgba(250,248,244,0.9)]">
                         <button type="button" className="att-arrow-btn shrink-0 mt-2" aria-label="Назад" disabled={edge.start} onClick={() => scrollByDir(-1)}>‹</button>
-                        <div ref={wrapRef} className="relative flex-1 min-w-0">
-                            <div ref={scrollRef} className="att-scroll-x att-lesson-scroll overflow-x-auto" onScroll={updateEdges}>
+                        <div className="flex flex-1 min-w-0 items-stretch">
+                            <div
+                                className="shrink-0 flex flex-col bg-white border-r border-stone-200/70"
+                                style={{ width: ATT_LEFT_COL, minWidth: ATT_LEFT_COL }}
+                            >
+                                <div className="flex flex-col justify-center min-h-[68px] pl-3 pr-2 border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)]">
+                                    <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Ученик</span>
+                                </div>
+                                {students.map((s) => {
+                                    const st = abonnementStatusLine(s);
+                                    return (
+                                        <button
+                                            key={s.id}
+                                            type="button"
+                                            onClick={() => onRowOpen(s)}
+                                            className="text-left pl-3 pr-2 py-3 min-h-[76px] flex flex-col justify-center border-b border-stone-100 last:border-b-0 bg-white border-0"
+                                            style={{ WebkitTapHighlightColor: 'transparent' }}
+                                        >
+                                            <span className="text-[17px] font-bold leading-snug line-clamp-2 tracking-tight" style={{ color: 'var(--text-primary)' }}>{s.name}</span>
+                                            <span className="text-[12px] mt-1 font-medium" style={{ color: st.ok ? 'var(--text-secondary)' : '#A86464' }}>{st.text}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div ref={scrollRef} className="att-scroll-x att-lesson-scroll flex-1 min-w-0 overflow-x-auto bg-white" onScroll={updateEdges}>
                                 <div className="inline-flex flex-col" style={{ minWidth: contentMin }}>
                                     <div className="flex items-stretch min-h-[68px] border-b border-stone-200/80 bg-[rgba(252,251,248,0.98)]">
-                                        <div
-                                            className="att-sticky-left shrink-0 flex flex-col justify-center pl-3 pr-2 border-r border-stone-200/70"
-                                            style={{ width: ATT_LEFT_COL, minWidth: ATT_LEFT_COL }}
-                                        >
-                                            <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>Ученик</span>
-                                        </div>
-                                        <div className="flex items-stretch">
-                                            {columns.map((c) => (
-                                                <div key={c.id} className="flex flex-col items-center justify-center text-center border-l border-stone-200/50 first:border-l-0 px-1 py-2" style={cellStyle}>
-                                                    <span className="text-[13px] font-semibold leading-tight line-clamp-2" style={{ color: 'var(--text-primary)' }}>{c.title}</span>
-                                                    <span className="text-[12px] mt-0.5 tabular-nums" style={{ color: 'var(--text-secondary)' }}>{formatDateShort(c.date)}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    {students.map((s) => {
-                                        const st = abonnementStatusLine(s);
-                                        return (
-                                            <div key={s.id} className="flex items-stretch min-h-[76px] border-b border-stone-100 last:border-b-0 bg-white">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => onRowOpen(s)}
-                                                    className="att-sticky-left shrink-0 text-left pl-3 pr-2 py-3 border-0 border-r border-stone-200/70 bg-white flex flex-col justify-center"
-                                                    style={{ width: ATT_LEFT_COL, minWidth: ATT_LEFT_COL, WebkitTapHighlightColor: 'transparent' }}
-                                                >
-                                                    <span className="text-[17px] font-bold leading-snug line-clamp-2 tracking-tight" style={{ color: 'var(--text-primary)' }}>{s.name}</span>
-                                                    <span className="text-[12px] mt-1 font-medium" style={{ color: st.ok ? 'var(--text-secondary)' : '#A86464' }}>{st.text}</span>
-                                                </button>
-                                                <div className="flex items-stretch">
-                                                    {columns.map((c) => {
-                                                        const v = s.attendance?.[c.id] ?? 0;
-                                                        return (
-                                                            <button
-                                                                key={c.id}
-                                                                type="button"
-                                                                onClick={(e) => { e.stopPropagation(); onCellTap(s, c.id); }}
-                                                                className="visit-cell-btn flex items-center justify-center border-l border-stone-200/45 first:border-l-0 bg-white"
-                                                                style={{ ...cellStyle, WebkitTapHighlightColor: 'transparent' }}
-                                                            >
-                                                                {visitMarkNode(v, `${s.id}-${c.id}`)}
-                                                            </button>
-                                                        );
-                                                    })}
-                                                </div>
+                                        {columns.map((c) => (
+                                            <div key={c.id} className="flex flex-col items-center justify-center text-center border-l border-stone-200/50 first:border-l-0 px-1 py-2" style={cellStyle}>
+                                                <span className="text-[13px] font-semibold leading-tight line-clamp-2" style={{ color: 'var(--text-primary)' }}>{c.title}</span>
+                                                <span className="text-[12px] mt-0.5 tabular-nums" style={{ color: 'var(--text-secondary)' }}>{formatDateShort(c.date)}</span>
                                             </div>
-                                        );
-                                    })}
+                                        ))}
+                                    </div>
+                                    {students.map((s) => (
+                                        <div key={s.id} className="flex items-stretch min-h-[76px] border-b border-stone-100 last:border-b-0 bg-white">
+                                            {columns.map((c) => {
+                                                const v = s.attendance?.[c.id] ?? 0;
+                                                return (
+                                                    <button
+                                                        key={c.id}
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); onCellTap(s, c.id); }}
+                                                        className="visit-cell-btn flex items-center justify-center border-l border-stone-200/45 first:border-l-0 bg-white"
+                                                        style={{ ...cellStyle, WebkitTapHighlightColor: 'transparent' }}
+                                                    >
+                                                        {visitMarkNode(v, `${s.id}-${c.id}`)}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
                         </div>
@@ -957,9 +957,16 @@
             );
         }
 
-        function AddLessonForm({ onCancel, onSave }) {
+        function AddLessonForm({ open, onCancel, onSave }) {
             const [title, setTitle] = useState('');
             const [date, setDate] = useState(todayISO());
+
+            useEffect(() => {
+                if (!open) return;
+                setTitle('');
+                setDate(todayISO());
+            }, [open]);
+
             return (
                 <div className="space-y-3">
                     <label className="block">
@@ -975,14 +982,13 @@
                         <button
                             type="button"
                             onClick={() => {
-                                const t = title.trim();
-                                if (!t) return;
+                                const t = title.trim() || 'Занятие';
                                 onSave({ title: t, date: date || todayISO() });
                             }}
                             className="btn-press flex-1 h-11 rounded-[14px] text-[15px] font-semibold text-[#1E1D1B]"
                             style={{ background: 'var(--accent)' }}
                         >
-                            Добавить
+                            Сохранить
                         </button>
                     </div>
                 </div>
@@ -1208,7 +1214,7 @@
                             <section className="student-sheet-panel absolute bottom-0 inset-x-0 bg-white rounded-t-[22px] p-4 safe-bottom sheet-shadow">
                                 <div className="w-10 h-1.5 rounded-full mx-auto mb-3" style={{ background: 'rgba(60,60,67,0.18)' }} />
                                 <h3 className="text-[17px] font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Новое занятие</h3>
-                                <AddLessonForm onCancel={() => setAddLessonOpen(false)} onSave={appendLesson} />
+                                <AddLessonForm open={addLessonOpen} onCancel={() => setAddLessonOpen(false)} onSave={appendLesson} />
                             </section>
                         </div>
                     )}
