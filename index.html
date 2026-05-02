@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#1E272E">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="description" content="2FACE CRM — учет учеников, абонементов, оплат и посещений">
+    <meta name="description" content="2FACE CRM — учёт учеников и посещений">
     <title>2FACE CRM</title>
     <link rel="manifest" id="pwa-manifest-link" href="#">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -15,37 +15,29 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
-        html, body {
-            margin: 0;
-            font-family: 'Inter', sans-serif;
-            -webkit-tap-highlight-color: transparent;
-            background: #f8f9fa;
-        }
+        html, body { margin: 0; font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background: #f8f9fa; }
         body { min-height: 100dvh; }
         .safe-top { padding-top: env(safe-area-inset-top); }
         .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
         .app-bg {
             background:
-                radial-gradient(1200px 360px at 50% -180px, rgba(85, 230, 193, 0.16), rgba(248, 249, 250, 0) 66%),
+                radial-gradient(1200px 360px at 50% -180px, rgba(85, 230, 193, 0.14), rgba(248, 249, 250, 0) 66%),
                 linear-gradient(180deg, #fcfdfd 0%, #f8f9fa 78%);
         }
-        .header-glass {
-            background: rgba(255, 255, 255, 0.9);
-            backdrop-filter: blur(16px);
-        }
+        .header-glass { background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(14px); }
         .active-tab-indicator {
-            position: absolute;
-            top: -8px;
-            width: 24px;
-            height: 4px;
-            border-radius: 99px;
-            background: #fff;
-            box-shadow: 0 0 12px rgba(255, 255, 255, 0.45);
+            position: absolute; top: -8px; width: 22px; height: 3px; border-radius: 99px;
+            background: #fff; box-shadow: 0 0 10px rgba(255, 255, 255, 0.45);
         }
-        .stat-card-shadow { box-shadow: 0 8px 24px rgba(17, 24, 39, 0.06); }
-        .row-shadow { box-shadow: 0 4px 18px rgba(15, 23, 42, 0.05); }
-        .sheet-shadow { box-shadow: 0 -14px 42px rgba(15, 23, 42, 0.14); }
+        .sheet-shadow { box-shadow: 0 -14px 42px rgba(15, 23, 42, 0.12); }
         .drawer-scroll { -webkit-overflow-scrolling: touch; }
+        /* Левая колонка ФИО + статус — закреплена при горизонтальном скролле занятий */
+        .att-sticky-left {
+            position: sticky; left: 0; z-index: 2;
+            background: linear-gradient(90deg, #fff 92%, rgba(255,255,255,0) 100%);
+            box-shadow: 4px 0 12px rgba(15, 23, 42, 0.06);
+        }
+        .att-scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     </style>
 </head>
 <body class="safe-bottom">
@@ -54,29 +46,23 @@
     <script type="text/babel">
         const { useMemo, useState, useEffect, useCallback } = React;
 
-        // -------------------------
-        // Константы и ключи
-        // -------------------------
         const STORAGE_KEY = '2face_v4_final';
         const LEGACY_KEYS = ['2face_students_final', '2face_subjects_final'];
+        const CATEGORY_IDS = ['children', 'teens', 'women', 'intensive'];
 
         const CATEGORIES = [
             { id: 'children', label: 'Дети' },
             { id: 'teens', label: 'Подростки' },
-            { id: 'women', label: 'Women' },
+            { id: 'women', label: '2 группы' },
             { id: 'intensive', label: 'Интенсив' }
         ];
 
-        const WOMEN_GROUPS = [
-            { id: 'group1', label: 'Группа 1' },
-            { id: 'group2', label: 'Группа 2' }
-        ];
+        const defaultSubjects = () => ['Дефиле', 'Актёрское', 'Пластика'];
 
-        const defaultSubjects = () => ['Дефиле', 'Фото', 'Актерское', 'Пластика'];
+        function uid() {
+            return `${Date.now()}_${Math.random().toString(16).slice(2, 9)}`;
+        }
 
-        // -------------------------
-        // Даты и форматирование
-        // -------------------------
         function todayISO() {
             const d = new Date();
             const y = d.getFullYear();
@@ -117,91 +103,150 @@
             return n.toLocaleString('ru-RU');
         }
 
-        function uid() {
-            return `${Date.now()}_${Math.random().toString(16).slice(2, 9)}`;
+        /** Дата внутри [from, until] включительно */
+        function isDateInInclusiveRange(iso, from, until) {
+            if (!iso || !from || !until) return false;
+            return iso >= from && iso <= until;
         }
 
-        function isExpired(endDate) {
-            if (!endDate) return false;
-            return endDate < todayISO();
+        /** Активный платёж: сегодня между paidFrom и paidUntil */
+        function getActivePayment(payments) {
+            const t = todayISO();
+            const list = Array.isArray(payments) ? payments : [];
+            return list.find((p) => isDateInInclusiveRange(t, p.paidFrom, p.paidUntil)) || null;
         }
 
-        // -------------------------
-        // Нормализация и миграция
-        // -------------------------
-        function normalizeLesson(lesson, subjects) {
-            return {
-                id: lesson?.id || uid(),
-                date: lesson?.date || todayISO(),
-                subject: lesson?.subject || subjects[0] || 'Занятие',
-                attended: lesson?.attended !== false,
-                note: lesson?.note || ''
-            };
+        function abonnementStatusLine(student) {
+            const active = getActivePayment(student.payments);
+            if (active) return { text: `до ${formatDateShort(active.paidUntil)}`, ok: true };
+            return { text: 'не оплачено', ok: false };
         }
 
-        function migrateVisitsToLessons(visits, subjects) {
-            if (!visits || typeof visits !== 'object') return [];
-            const base = todayISO();
-            const keys = Object.keys(visits);
-            const lessons = [];
-            keys.forEach((k, i) => {
-                if (!visits[k]) return;
-                lessons.push({
-                    id: uid(),
-                    date: addDaysISO(base, i),
-                    subject: subjects[i % subjects.length] || 'Занятие',
-                    attended: true,
-                    note: ''
-                });
+        /** Посещение: 0 —, 1 ✅, 2 ❌ */
+        function cycleVisit(v) {
+            return ((Number(v) || 0) + 1) % 3;
+        }
+
+        function visitChar(v) {
+            const n = Number(v) || 0;
+            if (n === 1) return '✅';
+            if (n === 2) return '❌';
+            return '—';
+        }
+
+        function defaultLessonColumnsForCategory(categoryId, subjectTitles) {
+            const titles = subjectTitles.length ? subjectTitles : defaultSubjects();
+            return titles.slice(0, 3).map((title, i) => ({
+                id: `${categoryId}_lesson_${i}_${uid()}`,
+                title: String(title || 'Занятие'),
+                date: addDaysISO(todayISO(), i * 2)
+            }));
+        }
+
+        function ensureLessonColumnsMap(raw, subjectTitles) {
+            const base = raw && typeof raw === 'object' ? { ...raw } : {};
+            CATEGORY_IDS.forEach((cid) => {
+                if (!Array.isArray(base[cid]) || base[cid].length === 0) {
+                    base[cid] = defaultLessonColumnsForCategory(cid, subjectTitles);
+                } else {
+                    base[cid] = base[cid].map((c) => ({
+                        id: c.id || uid(),
+                        title: String(c.title || c.name || 'Занятие'),
+                        date: c.date || todayISO()
+                    }));
+                }
             });
-            return lessons;
+            return base;
         }
 
-        function normalizePeriod(period, subjects) {
-            const startDate = period?.startDate || todayISO();
-            const endDate = period?.endDate || addDaysISO(startDate, 28);
-            const paymentDate = period?.paymentDate || period?.paidDate || startDate;
-            return {
-                id: period?.id || uid(),
-                paymentDate,
-                startDate,
-                endDate,
-                amount: Number(period?.amount ?? period?.paymentInfo?.amount ?? 5000) || 0,
-                isPaid: period?.isPaid ?? period?.paymentInfo?.isPaid ?? true,
-                comment: period?.comment || '',
-                lessons: Array.isArray(period?.lessons)
-                    ? period.lessons.map((x) => normalizeLesson(x, subjects))
-                    : migrateVisitsToLessons(period?.visits, subjects)
-            };
-        }
-
-        function pickCurrentIndex(periods, currentPeriodIndex) {
-            if (!periods.length) return 0;
-            if (Number.isInteger(currentPeriodIndex) && currentPeriodIndex >= 0 && currentPeriodIndex < periods.length) {
-                return currentPeriodIndex;
+        /** Периоды для совместимости сохранения / миграции */
+        function periodsFromPayments(payments, subjects) {
+            const list = Array.isArray(payments) ? payments : [];
+            if (!list.length) {
+                const t = todayISO();
+                return [{
+                    id: uid(),
+                    paymentDate: t,
+                    startDate: t,
+                    endDate: addDaysISO(t, 28),
+                    amount: 0,
+                    isPaid: false,
+                    comment: '',
+                    lessons: []
+                }];
             }
-            const activeIdx = periods.findIndex((p) => !isExpired(p.endDate));
-            return activeIdx >= 0 ? activeIdx : periods.length - 1;
+            return list.map((p) => ({
+                id: p.id || uid(),
+                paymentDate: p.paidAt || p.paidFrom || todayISO(),
+                startDate: p.paidFrom || todayISO(),
+                endDate: p.paidUntil || addDaysISO(p.paidFrom || todayISO(), 28),
+                amount: Number(p.amount ?? 0) || 0,
+                isPaid: true,
+                comment: '',
+                lessons: []
+            }));
+        }
+
+        function paymentsFromPeriods(periods) {
+            const list = Array.isArray(periods) ? periods : [];
+            return list.map((p) => ({
+                id: p.id || uid(),
+                paidFrom: p.startDate || p.paymentDate || todayISO(),
+                paidUntil: p.endDate || addDaysISO(p.startDate || todayISO(), 28),
+                paidAt: p.paymentDate || p.startDate || todayISO(),
+                amount: Number(p.amount ?? p.paymentInfo?.amount ?? 0) || 0
+            }));
+        }
+
+        function pickCurrentPeriodIndexFromPayments(payments) {
+            const t = todayISO();
+            const list = Array.isArray(payments) ? payments : [];
+            const idx = list.findIndex((p) => isDateInInclusiveRange(t, p.paidFrom, p.paidUntil));
+            if (idx >= 0) return idx;
+            if (!list.length) return 0;
+            const lastActive = [...list].map((p, i) => ({ i, p })).reverse().find(({ p }) => p.paidUntil >= t);
+            return lastActive ? lastActive.i : list.length - 1;
         }
 
         function normalizeStudent(student, subjects) {
-            const periodsRaw = Array.isArray(student?.periods) ? student.periods : [];
-            const periods = periodsRaw.length
-                ? periodsRaw.map((p) => normalizePeriod(p, subjects))
-                : [normalizePeriod({}, subjects)];
-            const category = CATEGORIES.some((c) => c.id === student?.category) ? student.category : 'children';
-            const subGroup = category === 'women'
-                ? (student?.subGroup === 'group2' ? 'group2' : 'group1')
-                : 'default';
+            const paymentsRaw = student?.payments;
+            let payments = Array.isArray(paymentsRaw) && paymentsRaw.length
+                ? paymentsRaw.map((p) => ({
+                    id: p.id || uid(),
+                    paidFrom: p.paidFrom || todayISO(),
+                    paidUntil: p.paidUntil || addDaysISO(p.paidFrom || todayISO(), 28),
+                    paidAt: p.paidAt || p.paidFrom || todayISO(),
+                    amount: Number(p.amount ?? 0) || 0
+                }))
+                : paymentsFromPeriods(student?.periods);
+
+            let periods = periodsFromPayments(payments, subjects);
+            if (!payments.length && periods.length) {
+                payments = periods.map((p) => ({
+                    id: p.id || uid(),
+                    paidFrom: p.startDate || todayISO(),
+                    paidUntil: p.endDate || addDaysISO(p.startDate || todayISO(), 28),
+                    paidAt: p.paymentDate || p.startDate || todayISO(),
+                    amount: Number(p.amount ?? 0) || 0
+                }));
+                periods = periodsFromPayments(payments, subjects);
+            }
+            const currentPeriodIndex = pickCurrentPeriodIndexFromPayments(payments);
+
+            const category = CATEGORY_IDS.includes(student?.category) ? student.category : 'children';
+            const attendance = student?.attendance && typeof student.attendance === 'object' ? { ...student.attendance } : {};
+
             return {
                 id: student?.id || uid(),
                 name: student?.name || 'Без имени',
                 category,
-                subGroup,
+                subGroup: category === 'women' ? (student?.subGroup === 'group2' ? 'group2' : 'group1') : 'default',
                 phone: student?.phone || '',
                 note: student?.note || '',
+                payments,
                 periods,
-                currentPeriodIndex: pickCurrentIndex(periods, student?.currentPeriodIndex)
+                currentPeriodIndex,
+                attendance
             };
         }
 
@@ -214,14 +259,14 @@
                     const subjects = Array.isArray(parsed?.subjects) && parsed.subjects.length
                         ? parsed.subjects.filter(Boolean)
                         : subjectsBase;
+                    const lessonColumnsByCategory = ensureLessonColumnsMap(parsed?.lessonColumnsByCategory, subjects);
                     const students = Array.isArray(parsed?.students)
                         ? parsed.students.map((s) => normalizeStudent(s, subjects))
                         : [];
-                    return { subjects, students };
+                    return { subjects, students, lessonColumnsByCategory };
                 }
             } catch (e) {}
 
-            // Мягкая миграция старых ключей
             try {
                 const oldStudentsRaw = localStorage.getItem(LEGACY_KEYS[0]);
                 const oldSubjectsRaw = localStorage.getItem(LEGACY_KEYS[1]);
@@ -233,24 +278,30 @@
                 const students = Array.isArray(oldStudents)
                     ? oldStudents.map((s) => normalizeStudent(s, subjects))
                     : [];
-                return { subjects, students };
+                return {
+                    subjects,
+                    students,
+                    lessonColumnsByCategory: ensureLessonColumnsMap(null, subjects)
+                };
             } catch (e) {
-                return { subjects: subjectsBase, students: [] };
+                return {
+                    subjects: subjectsBase,
+                    students: [],
+                    lessonColumnsByCategory: ensureLessonColumnsMap(null, subjectsBase)
+                };
             }
         }
 
-        function saveAppState(students, subjects) {
+        function saveAppState(students, subjects, lessonColumnsByCategory) {
             localStorage.setItem(STORAGE_KEY, JSON.stringify({
-                version: 6,
+                version: 7,
                 updatedAt: new Date().toISOString(),
                 students,
-                subjects
+                subjects,
+                lessonColumnsByCategory
             }));
         }
 
-        // -------------------------
-        // PWA manifest
-        // -------------------------
         function setupPwaManifest() {
             const link = document.getElementById('pwa-manifest-link');
             if (!link) return;
@@ -268,256 +319,41 @@
                     type: 'image/svg+xml'
                 }]
             };
-            const blob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' });
-            link.href = URL.createObjectURL(blob);
+            link.href = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' }));
         }
 
-        // -------------------------
-        // Переиспользуемые UI
-        // -------------------------
-        function Pill({ children, className = '' }) {
-            return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${className}`}>{children}</span>;
-        }
-
-        function StudentCompactRow({ student, period, onOpen }) {
-            const expired = isExpired(period.endDate);
-            const lessons = period.lessons.length;
-            const attended = period.lessons.filter((l) => l.attended).length;
-            return (
-                <div className="bg-white rounded-2xl row-shadow border border-white/90 h-[84px] px-3 py-2.5 flex items-center gap-2.5">
-                    <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2">
-                            <p className="text-[14px] leading-tight font-semibold text-[#1E272E] truncate">{student.name}</p>
-                            <Pill className={expired ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}>
-                                {expired ? 'Истек' : 'Активен'}
-                            </Pill>
-                        </div>
-                        <div className="mt-1 text-[11px] text-slate-500 truncate">
-                            до {formatDateShort(period.endDate)} • {period.isPaid ? 'Оплачено' : 'Долг'} {formatMoney(period.amount)} • {attended}/{lessons} занятий
-                        </div>
-                        <div className="mt-1.5 flex items-center gap-1.5">
-                            <Pill className="bg-slate-100 text-slate-700">{period.isPaid ? 'Оплата OK' : 'Есть долг'}</Pill>
-                            <Pill className="bg-white border border-slate-200 text-slate-600">Период {student.currentPeriodIndex + 1}/{student.periods.length}</Pill>
-                        </div>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={onOpen}
-                        className="shrink-0 h-8 px-3 rounded-lg text-[11px] font-bold bg-[#1E272E] text-white active:scale-95 transition-transform"
-                    >
-                        Открыть
-                    </button>
-                </div>
-            );
-        }
-
-        function StudentForm({ initial, category, onCancel, onSave }) {
-            const [name, setName] = useState(initial?.name || '');
-            const [subGroup, setSubGroup] = useState(initial?.subGroup || 'group1');
-            const [phone, setPhone] = useState(initial?.phone || '');
-            const [note, setNote] = useState(initial?.note || '');
-            return (
-                <div className="space-y-3">
-                    <label className="block">
-                        <span className="text-[11px] font-semibold text-slate-500">Имя и фамилия</span>
-                        <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 h-10 w-full rounded-xl bg-slate-100 px-3 outline-none focus:ring-2 focus:ring-[#55E6C1]" />
-                    </label>
-                    {category === 'women' && (
-                        <label className="block">
-                            <span className="text-[11px] font-semibold text-slate-500">Группа</span>
-                            <select value={subGroup} onChange={(e) => setSubGroup(e.target.value)} className="mt-1 h-10 w-full rounded-xl bg-slate-100 px-3 outline-none focus:ring-2 focus:ring-[#55E6C1]">
-                                {WOMEN_GROUPS.map((g) => <option key={g.id} value={g.id}>{g.label}</option>)}
-                            </select>
-                        </label>
-                    )}
-                    <label className="block">
-                        <span className="text-[11px] font-semibold text-slate-500">Телефон</span>
-                        <input value={phone} onChange={(e) => setPhone(e.target.value)} className="mt-1 h-10 w-full rounded-xl bg-slate-100 px-3 outline-none focus:ring-2 focus:ring-[#55E6C1]" />
-                    </label>
-                    <label className="block">
-                        <span className="text-[11px] font-semibold text-slate-500">Заметка</span>
-                        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} className="mt-1 w-full rounded-xl bg-slate-100 px-3 py-2 outline-none focus:ring-2 focus:ring-[#55E6C1]"></textarea>
-                    </label>
-                    <div className="flex gap-2">
-                        <button type="button" onClick={onCancel} className="flex-1 h-10 rounded-xl bg-slate-100 text-slate-600 text-sm font-bold">Отмена</button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                if (!name.trim()) return;
-                                onSave({
-                                    ...initial,
-                                    name: name.trim(),
-                                    subGroup: category === 'women' ? subGroup : 'default',
-                                    phone: phone.trim(),
-                                    note: note.trim()
-                                });
-                            }}
-                            className="flex-1 h-10 rounded-xl bg-[#1E272E] text-white text-sm font-bold"
-                        >
-                            Сохранить
-                        </button>
-                    </div>
-                </div>
-            );
-        }
-
-        function PeriodForm({ period, onCancel, onSave }) {
-            const [paymentDate, setPaymentDate] = useState(period.paymentDate || todayISO());
-            const [startDate, setStartDate] = useState(period.startDate || todayISO());
-            const [endDate, setEndDate] = useState(period.endDate || addDaysISO(startDate, 28));
-            const [amount, setAmount] = useState(String(period.amount ?? 5000));
-            const [isPaid, setIsPaid] = useState(period.isPaid !== false);
-            const [comment, setComment] = useState(period.comment || '');
-            const [manualEnd, setManualEnd] = useState(false);
-
-            useEffect(() => {
-                if (!manualEnd) setEndDate(addDaysISO(startDate, 28));
-            }, [startDate, manualEnd]);
-
-            return (
-                <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
-                        <label className="block">
-                            <span className="text-[11px] font-semibold text-slate-500">Дата оплаты</span>
-                            <input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} className="mt-1 h-10 w-full rounded-lg bg-slate-100 px-2 outline-none focus:ring-2 focus:ring-[#55E6C1]" />
-                        </label>
-                        <label className="block">
-                            <span className="text-[11px] font-semibold text-slate-500">Дата начала</span>
-                            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1 h-10 w-full rounded-lg bg-slate-100 px-2 outline-none focus:ring-2 focus:ring-[#55E6C1]" />
-                        </label>
-                    </div>
-                    <label className="block">
-                        <span className="text-[11px] font-semibold text-slate-500">Дата окончания</span>
-                        <input
-                            type="date"
-                            value={endDate}
-                            onChange={(e) => {
-                                setManualEnd(true);
-                                setEndDate(e.target.value);
-                            }}
-                            className="mt-1 h-10 w-full rounded-lg bg-slate-100 px-2 outline-none focus:ring-2 focus:ring-[#55E6C1]"
-                        />
-                    </label>
-                    <div className="grid grid-cols-2 gap-2">
-                        <label className="block">
-                            <span className="text-[11px] font-semibold text-slate-500">Сумма</span>
-                            <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="mt-1 h-10 w-full rounded-lg bg-slate-100 px-2 outline-none focus:ring-2 focus:ring-[#55E6C1]" />
-                        </label>
-                        <div className="block">
-                            <span className="text-[11px] font-semibold text-slate-500">Статус оплаты</span>
-                            <div className="mt-1 flex gap-1">
-                                <button type="button" onClick={() => setIsPaid(true)} className={`flex-1 h-10 rounded-lg text-[11px] font-bold ${isPaid ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>Оплачено</button>
-                                <button type="button" onClick={() => setIsPaid(false)} className={`flex-1 h-10 rounded-lg text-[11px] font-bold ${!isPaid ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'}`}>Долг</button>
-                            </div>
-                        </div>
-                    </div>
-                    <label className="block">
-                        <span className="text-[11px] font-semibold text-slate-500">Комментарий</span>
-                        <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} className="mt-1 w-full rounded-lg bg-slate-100 px-3 py-2 outline-none focus:ring-2 focus:ring-[#55E6C1]"></textarea>
-                    </label>
-                    <div className="flex gap-2">
-                        <button type="button" onClick={onCancel} className="flex-1 h-10 rounded-xl bg-slate-100 text-slate-600 text-sm font-bold">Отмена</button>
-                        <button
-                            type="button"
-                            onClick={() => onSave({
-                                ...period,
-                                paymentDate: paymentDate || todayISO(),
-                                startDate: startDate || todayISO(),
-                                endDate: endDate || addDaysISO(startDate || todayISO(), 28),
-                                amount: Number(amount || 0),
-                                isPaid,
-                                comment
-                            })}
-                            className="flex-1 h-10 rounded-xl bg-[#1E272E] text-white text-sm font-bold"
-                        >
-                            Сохранить период
-                        </button>
-                    </div>
-                </div>
-            );
-        }
-
-        function LessonForm({ subjects, onCancel, onSave }) {
-            const [date, setDate] = useState(todayISO());
-            const [subject, setSubject] = useState(subjects[0] || 'Занятие');
-            const [attended, setAttended] = useState(true);
-            const [note, setNote] = useState('');
-            return (
-                <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-2">
-                        <label className="block">
-                            <span className="text-[11px] font-semibold text-slate-500">Дата занятия</span>
-                            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="mt-1 h-10 w-full rounded-lg bg-slate-100 px-2 outline-none focus:ring-2 focus:ring-[#55E6C1]" />
-                        </label>
-                        <label className="block">
-                            <span className="text-[11px] font-semibold text-slate-500">Предмет</span>
-                            <select value={subject} onChange={(e) => setSubject(e.target.value)} className="mt-1 h-10 w-full rounded-lg bg-slate-100 px-2 outline-none focus:ring-2 focus:ring-[#55E6C1]">
-                                {subjects.map((s, i) => <option key={i} value={s}>{s}</option>)}
-                            </select>
-                        </label>
-                    </div>
-                    <div className="flex gap-2">
-                        <button type="button" onClick={() => setAttended(true)} className={`flex-1 h-10 rounded-lg text-xs font-bold ${attended ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>Был</button>
-                        <button type="button" onClick={() => setAttended(false)} className={`flex-1 h-10 rounded-lg text-xs font-bold ${!attended ? 'bg-rose-50 text-rose-700' : 'bg-slate-100 text-slate-500'}`}>Не был</button>
-                    </div>
-                    <label className="block">
-                        <span className="text-[11px] font-semibold text-slate-500">Комментарий</span>
-                        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} className="mt-1 w-full rounded-lg bg-slate-100 px-3 py-2 outline-none focus:ring-2 focus:ring-[#55E6C1]"></textarea>
-                    </label>
-                    <div className="flex gap-2">
-                        <button type="button" onClick={onCancel} className="flex-1 h-10 rounded-xl bg-slate-100 text-slate-600 text-sm font-bold">Отмена</button>
-                        <button type="button" onClick={() => onSave({ id: uid(), date, subject, attended, note })} className="flex-1 h-10 rounded-xl bg-[#1E272E] text-white text-sm font-bold">Добавить</button>
-                    </div>
-                </div>
-            );
-        }
-
-        function LessonRow({ lesson, onToggle, onDelete }) {
-            return (
-                <div className="rounded-xl border border-slate-200 bg-white px-2.5 py-2 flex items-center justify-between gap-2">
-                    <div>
-                        <p className="text-xs font-semibold text-slate-800">{lesson.subject}</p>
-                        <p className="text-[11px] text-slate-500">{formatDateFull(lesson.date)}</p>
-                        {lesson.note ? <p className="text-[11px] text-slate-500 mt-0.5">{lesson.note}</p> : null}
-                    </div>
-                    <div className="flex flex-col gap-1">
-                        <button type="button" onClick={onToggle} className={`h-7 px-2 rounded-lg text-[10px] font-bold ${lesson.attended ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
-                            {lesson.attended ? 'Был' : 'Не был'}
-                        </button>
-                        <button type="button" onClick={onDelete} className="h-7 px-2 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-600">
-                            Удалить
-                        </button>
-                    </div>
-                </div>
-            );
-        }
-
-        function SubjectManager({ subjects, onClose, onChange }) {
-            const [list, setList] = useState(subjects);
+        /** Редактор колонок занятий для текущей вкладки (название + дата) */
+        function LessonColumnsEditor({ columns, onClose, onSave }) {
+            const [rows, setRows] = useState(columns.map((c) => ({ ...c })));
             return (
                 <div className="fixed inset-0 z-[80]">
-                    <div className="absolute inset-0 bg-black/40" onClick={onClose}></div>
-                    <section className="absolute bottom-0 inset-x-0 max-h-[84vh] bg-white rounded-t-[2rem] drawer-scroll overflow-y-auto p-4 safe-bottom sheet-shadow">
-                        <div className="w-10 h-1.5 bg-slate-200 rounded-full mx-auto mb-3"></div>
-                        <h3 className="text-base font-bold text-[#1E272E]">Предметы</h3>
-                        <p className="text-xs text-slate-500 mt-0.5">Можно добавить, переименовать и удалить.</p>
+                    <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+                    <section className="absolute bottom-0 inset-x-0 max-h-[80vh] bg-white rounded-t-[2rem] drawer-scroll overflow-y-auto p-4 safe-bottom sheet-shadow">
+                        <div className="w-10 h-1.5 bg-slate-200 rounded-full mx-auto mb-3" />
+                        <h3 className="text-base font-bold text-[#1E272E]">Занятия вкладки</h3>
+                        <p className="text-xs text-slate-500 mt-0.5">Общие колонки для всех учеников на этой вкладке.</p>
                         <div className="mt-3 space-y-2">
-                            {list.map((sub, i) => (
-                                <div key={i} className="flex gap-2">
-                                    <input value={sub} onChange={(e) => setList((prev) => prev.map((x, idx) => idx === i ? e.target.value : x))} className="flex-1 h-10 rounded-xl bg-slate-100 px-3 outline-none focus:ring-2 focus:ring-[#55E6C1]" />
-                                    <button type="button" onClick={() => setList((prev) => prev.filter((_, idx) => idx !== i))} className="h-10 px-3 rounded-xl bg-rose-50 text-rose-700 text-xs font-bold">Удалить</button>
+                            {rows.map((r, i) => (
+                                <div key={r.id} className="flex flex-col gap-1 sm:flex-row sm:items-center">
+                                    <input
+                                        value={r.title}
+                                        onChange={(e) => setRows((prev) => prev.map((x, j) => j === i ? { ...x, title: e.target.value } : x))}
+                                        className="h-10 flex-1 rounded-xl bg-slate-100 px-3 text-sm outline-none focus:ring-2 focus:ring-[#55E6C1]"
+                                        placeholder="Название"
+                                    />
+                                    <input
+                                        type="date"
+                                        value={r.date}
+                                        onChange={(e) => setRows((prev) => prev.map((x, j) => j === i ? { ...x, date: e.target.value } : x))}
+                                        className="h-10 w-full sm:w-[150px] rounded-xl bg-slate-100 px-2 text-sm outline-none focus:ring-2 focus:ring-[#55E6C1]"
+                                    />
                                 </div>
                             ))}
                         </div>
-                        <button type="button" onClick={() => setList((prev) => [...prev, `Предмет ${prev.length + 1}`])} className="mt-3 h-10 w-full rounded-xl bg-slate-100 text-slate-700 text-sm font-bold">+ Добавить предмет</button>
                         <button
                             type="button"
-                            onClick={() => {
-                                const clean = list.map((x) => x.trim()).filter(Boolean);
-                                onChange(clean.length ? clean : defaultSubjects());
-                                onClose();
-                            }}
-                            className="mt-2 h-10 w-full rounded-xl bg-[#1E272E] text-white text-sm font-bold"
+                            onClick={() => onSave(rows.filter((x) => String(x.title || '').trim()))}
+                            className="mt-4 h-11 w-full rounded-xl bg-[#1E272E] text-white text-sm font-bold"
                         >
                             Сохранить
                         </button>
@@ -526,177 +362,170 @@
             );
         }
 
-        function StudentDrawer({ student, subjects, onClose, onSaveStudent, onDeleteStudent }) {
-            const [mode, setMode] = useState('view');
-            const currentPeriod = student.periods[student.currentPeriodIndex];
-            const expired = isExpired(currentPeriod.endDate);
-
-            const lessonsSorted = useMemo(
-                () => [...currentPeriod.lessons].sort((a, b) => a.date.localeCompare(b.date)),
-                [currentPeriod.lessons]
+        /** Форма добавления ученика: только ФИО (без группы / класса) */
+        function AddStudentForm({ onCancel, onSave }) {
+            const [name, setName] = useState('');
+            return (
+                <div className="space-y-3">
+                    <label className="block">
+                        <span className="text-[11px] font-semibold text-slate-500">ФИО</span>
+                        <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 h-11 w-full rounded-xl bg-slate-100 px-3 outline-none focus:ring-2 focus:ring-[#55E6C1]" />
+                    </label>
+                    <div className="flex gap-2">
+                        <button type="button" onClick={onCancel} className="flex-1 h-11 rounded-xl bg-slate-100 text-slate-600 text-sm font-bold">Отмена</button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const n = name.trim();
+                                if (!n) return;
+                                onSave({ name: n });
+                            }}
+                            className="flex-1 h-11 rounded-xl bg-[#1E272E] text-white text-sm font-bold"
+                        >
+                            Добавить
+                        </button>
+                    </div>
+                </div>
             );
+        }
 
-            const setCurrentIndex = (nextIndex) => {
-                if (nextIndex < 0 || nextIndex >= student.periods.length) return;
-                onSaveStudent({ ...student, currentPeriodIndex: nextIndex });
-                setMode('view');
+        /** Карточка ученика: абонементы и ФИО — без класса и группы */
+        function StudentCardSheet({ student, subjects, onClose, onSaveStudent, onDeleteStudent }) {
+            const [name, setName] = useState(student.name);
+            const [payments, setPayments] = useState(() => [...(student.payments || [])].sort((a, b) => a.paidFrom.localeCompare(b.paidFrom)));
+            const [editTerm, setEditTerm] = useState(false);
+            const [showAdd, setShowAdd] = useState(false);
+            const active = getActivePayment(payments);
+            const activeIdx = active ? payments.findIndex((p) => p.id === active.id) : -1;
+
+            const [newPaidAt, setNewPaidAt] = useState(todayISO());
+            const [newUntil, setNewUntil] = useState(addDaysISO(todayISO(), 28));
+            const [termFrom, setTermFrom] = useState(active?.paidFrom || todayISO());
+            const [termUntil, setTermUntil] = useState(active?.paidUntil || addDaysISO(todayISO(), 28));
+
+            useEffect(() => {
+                if (active) {
+                    setTermFrom(active.paidFrom);
+                    setTermUntil(active.paidUntil);
+                }
+            }, [student.id, active?.id, active?.paidFrom, active?.paidUntil]);
+
+            const persist = () => {
+                onSaveStudent(normalizeStudent({ ...student, name: name.trim() || student.name, payments }, subjects));
             };
 
-            const updateCurrentPeriod = (nextPeriod) => {
-                const periods = student.periods.map((p, i) => i === student.currentPeriodIndex ? normalizePeriod(nextPeriod, subjects) : p);
-                onSaveStudent({ ...student, periods, currentPeriodIndex: student.currentPeriodIndex });
-                setMode('view');
+            const handleSave = () => {
+                onSaveStudent(normalizeStudent({ ...student, name: name.trim() || student.name, payments }, subjects));
+                onClose();
             };
 
-            const addNewPeriod = (periodData) => {
-                const period = normalizePeriod({ ...periodData, lessons: [] }, subjects);
-                const periods = [...student.periods, period];
-                onSaveStudent({ ...student, periods, currentPeriodIndex: periods.length - 1 });
-                setMode('view');
+            const applyTermChange = () => {
+                if (activeIdx < 0) return;
+                const next = payments.map((p, i) => i === activeIdx ? { ...p, paidFrom: termFrom, paidUntil: termUntil } : p);
+                setPayments(next.sort((a, b) => a.paidFrom.localeCompare(b.paidFrom)));
+                onSaveStudent(normalizeStudent({ ...student, name: name.trim() || student.name, payments: next }, subjects));
+                setEditTerm(false);
             };
 
-            const addLesson = (lesson) => {
-                const periods = student.periods.map((p, i) => {
-                    if (i !== student.currentPeriodIndex) return p;
-                    return { ...p, lessons: [...p.lessons, normalizeLesson(lesson, subjects)] };
-                });
-                onSaveStudent({ ...student, periods });
-                setMode('view');
+            const addPaymentPeriod = () => {
+                const from = newPaidAt || todayISO();
+                const until = newUntil || addDaysISO(from, 28);
+                const row = {
+                    id: uid(),
+                    paidFrom: from,
+                    paidUntil: until,
+                    paidAt: from,
+                    amount: 0
+                };
+                const next = [...payments, row].sort((a, b) => a.paidFrom.localeCompare(b.paidFrom));
+                setPayments(next);
+                onSaveStudent(normalizeStudent({ ...student, name: name.trim() || student.name, payments: next }, subjects));
+                setShowAdd(false);
+                setNewPaidAt(todayISO());
+                setNewUntil(addDaysISO(todayISO(), 28));
             };
+
+            useEffect(() => {
+                if (showAdd) setNewUntil(addDaysISO(newPaidAt || todayISO(), 28));
+            }, [newPaidAt, showAdd]);
 
             return (
                 <div className="fixed inset-0 z-[75]">
-                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={onClose}></div>
-                    <section className="absolute bottom-0 inset-x-0 max-h-[92vh] bg-white rounded-t-[2rem] drawer-scroll overflow-y-auto safe-bottom sheet-shadow">
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={onClose} />
+                    <section className="absolute bottom-0 inset-x-0 max-h-[90vh] bg-white rounded-t-[2rem] drawer-scroll overflow-y-auto safe-bottom sheet-shadow">
                         <header className="sticky top-0 z-10 header-glass border-b border-slate-100 px-4 py-3">
-                            <div className="w-10 h-1.5 bg-slate-200 rounded-full mx-auto mb-3"></div>
-                            <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0">
-                                    <h3 className="text-[18px] leading-tight font-extrabold text-[#1E272E] truncate">{student.name}</h3>
-                                    <p className="text-[11px] text-slate-500 mt-0.5">{student.phone || 'Телефон не указан'}</p>
-                                </div>
+                            <div className="w-10 h-1.5 bg-slate-200 rounded-full mx-auto mb-3" />
+                            <div className="flex justify-between items-start gap-2">
+                                <h3 className="text-lg font-extrabold text-[#1E272E]">Карточка ученика</h3>
                                 <button type="button" onClick={onClose} className="h-8 px-2.5 rounded-lg bg-slate-100 text-slate-600 text-xs font-bold">Закрыть</button>
                             </div>
                         </header>
-
                         <div className="px-4 py-4 space-y-4">
-                            <section className="bg-slate-50 rounded-2xl p-3">
-                                <div className="flex items-center justify-between gap-2">
-                                    <div className="flex gap-2">
-                                        <button type="button" onClick={() => setCurrentIndex(student.currentPeriodIndex - 1)} disabled={student.currentPeriodIndex <= 0} className="w-8 h-8 rounded-lg bg-white border border-slate-200 disabled:opacity-35">←</button>
-                                        <button type="button" onClick={() => setCurrentIndex(student.currentPeriodIndex + 1)} disabled={student.currentPeriodIndex >= student.periods.length - 1} className="w-8 h-8 rounded-lg bg-white border border-slate-200 disabled:opacity-35">→</button>
+                            <label className="block">
+                                <span className="text-[11px] font-semibold text-slate-500">ФИО</span>
+                                <input value={name} onChange={(e) => setName(e.target.value)} onBlur={persist} className="mt-1 h-11 w-full rounded-xl bg-slate-100 px-3 outline-none focus:ring-2 focus:ring-[#55E6C1]" />
+                            </label>
+
+                            <section className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">Текущий период абонемента</p>
+                                {active ? (
+                                    <div className="mt-2 text-sm text-[#1E272E]">
+                                        <p>{formatDateFull(active.paidFrom)} — {formatDateFull(active.paidUntil)}</p>
+                                        {active.amount > 0 ? <p className="text-xs text-slate-500 mt-1">Сумма: {formatMoney(active.amount)} ₽</p> : null}
                                     </div>
-                                    <span className="text-[11px] font-semibold text-slate-600">Период {student.currentPeriodIndex + 1} из {student.periods.length}</span>
-                                </div>
-                                <div className="mt-2 flex flex-wrap gap-1.5">
-                                    <Pill className={expired ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}>
-                                        {expired ? `Абонемент истек (${formatDateShort(currentPeriod.endDate)})` : `Активен до ${formatDateShort(currentPeriod.endDate)}`}
-                                    </Pill>
-                                    <Pill className={currentPeriod.isPaid ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}>
-                                        {currentPeriod.isPaid ? 'Оплачено' : 'Долг'}
-                                    </Pill>
-                                </div>
-                                <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-600">
-                                    <p>Дата оплаты: {formatDateFull(currentPeriod.paymentDate)}</p>
-                                    <p>Сумма: {formatMoney(currentPeriod.amount)} ₽</p>
-                                    <p>Начало: {formatDateFull(currentPeriod.startDate)}</p>
-                                    <p>Окончание: {formatDateFull(currentPeriod.endDate)}</p>
-                                </div>
-                                {currentPeriod.comment ? <p className="mt-2 text-xs text-slate-500 bg-white rounded-lg p-2 border border-slate-100">{currentPeriod.comment}</p> : null}
-                            </section>
-
-                            <section className="flex flex-wrap gap-2">
-                                <button type="button" onClick={() => setMode('addLesson')} className="h-9 px-3 rounded-xl bg-[#E8F8F2] text-[#2D6A4F] text-xs font-bold">Добавить занятие</button>
-                                <button type="button" onClick={() => setMode('addPeriod')} className="h-9 px-3 rounded-xl bg-[#1E272E] text-white text-xs font-bold">Добавить новый период</button>
-                                <button type="button" onClick={() => setMode('editPeriod')} className="h-9 px-3 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold">Редактировать период</button>
-                                <button type="button" onClick={() => setMode('editStudent')} className="h-9 px-3 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold">Редактировать ученика</button>
-                            </section>
-
-                            {mode === 'editStudent' && (
-                                <section className="border border-slate-200 rounded-2xl p-3 bg-white">
-                                    <h4 className="text-sm font-bold text-[#1E272E] mb-2">Данные ученика</h4>
-                                    <StudentForm
-                                        initial={student}
-                                        category={student.category}
-                                        onCancel={() => setMode('view')}
-                                        onSave={(nextFields) => {
-                                            onSaveStudent({ ...student, ...nextFields });
-                                            setMode('view');
-                                        }}
-                                    />
-                                </section>
-                            )}
-
-                            {mode === 'editPeriod' && (
-                                <section className="border border-slate-200 rounded-2xl p-3 bg-white">
-                                    <h4 className="text-sm font-bold text-[#1E272E] mb-2">Редактирование периода</h4>
-                                    <PeriodForm
-                                        period={currentPeriod}
-                                        onCancel={() => setMode('view')}
-                                        onSave={updateCurrentPeriod}
-                                    />
-                                </section>
-                            )}
-
-                            {mode === 'addPeriod' && (
-                                <section className="border border-slate-200 rounded-2xl p-3 bg-white">
-                                    <h4 className="text-sm font-bold text-[#1E272E] mb-2">Добавить новый период</h4>
-                                    <PeriodForm
-                                        period={{
-                                            paymentDate: todayISO(),
-                                            startDate: addDaysISO(currentPeriod.endDate || todayISO(), 1),
-                                            endDate: addDaysISO(currentPeriod.endDate || todayISO(), 28),
-                                            amount: currentPeriod.amount || 5000,
-                                            isPaid: false,
-                                            comment: ''
-                                        }}
-                                        onCancel={() => setMode('view')}
-                                        onSave={addNewPeriod}
-                                    />
-                                </section>
-                            )}
-
-                            {mode === 'addLesson' && (
-                                <section className="border border-slate-200 rounded-2xl p-3 bg-white">
-                                    <h4 className="text-sm font-bold text-[#1E272E] mb-2">Добавить занятие</h4>
-                                    <LessonForm subjects={subjects} onCancel={() => setMode('view')} onSave={addLesson} />
-                                </section>
-                            )}
-
-                            <section className="border border-slate-200 rounded-2xl p-3 bg-white">
-                                <h4 className="text-sm font-bold text-[#1E272E]">Список занятий</h4>
-                                {lessonsSorted.length === 0 ? (
-                                    <p className="mt-2 text-xs text-slate-500">В текущем периоде занятий пока нет.</p>
                                 ) : (
-                                    <div className="mt-2 space-y-2">
-                                        {lessonsSorted.map((lesson) => (
-                                            <LessonRow
-                                                key={lesson.id}
-                                                lesson={lesson}
-                                                onToggle={() => {
-                                                    const periods = student.periods.map((p, i) => {
-                                                        if (i !== student.currentPeriodIndex) return p;
-                                                        return { ...p, lessons: p.lessons.map((x) => x.id === lesson.id ? { ...x, attended: !x.attended } : x) };
-                                                    });
-                                                    onSaveStudent({ ...student, periods });
-                                                }}
-                                                onDelete={() => {
-                                                    const periods = student.periods.map((p, i) => {
-                                                        if (i !== student.currentPeriodIndex) return p;
-                                                        return { ...p, lessons: p.lessons.filter((x) => x.id !== lesson.id) };
-                                                    });
-                                                    onSaveStudent({ ...student, periods });
-                                                }}
-                                            />
-                                        ))}
-                                    </div>
+                                    <p className="mt-2 text-sm text-rose-600 font-medium">Нет активного периода (не оплачено)</p>
                                 )}
+                                {editTerm && activeIdx >= 0 ? (
+                                    <div className="mt-3 space-y-2">
+                                        <label className="block text-[11px] font-semibold text-slate-500">Срок с</label>
+                                        <input type="date" value={termFrom} onChange={(e) => setTermFrom(e.target.value)} className="h-10 w-full rounded-lg bg-white border border-slate-200 px-2" />
+                                        <label className="block text-[11px] font-semibold text-slate-500">Срок по</label>
+                                        <input type="date" value={termUntil} onChange={(e) => setTermUntil(e.target.value)} className="h-10 w-full rounded-lg bg-white border border-slate-200 px-2" />
+                                        <div className="flex gap-2 pt-1">
+                                            <button type="button" onClick={() => setEditTerm(false)} className="flex-1 h-9 rounded-lg bg-slate-200 text-sm font-bold">Отмена</button>
+                                            <button type="button" onClick={applyTermChange} className="flex-1 h-9 rounded-lg bg-[#1E272E] text-white text-sm font-bold">Применить срок</button>
+                                        </div>
+                                    </div>
+                                ) : null}
                             </section>
+
+                            <section>
+                                <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-2">История оплат (периоды)</p>
+                                <ul className="space-y-2 max-h-40 overflow-y-auto">
+                                    {[...payments].sort((a, b) => b.paidFrom.localeCompare(a.paidFrom)).map((p) => (
+                                        <li key={p.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700">
+                                            <span className="font-semibold">{formatDateFull(p.paidFrom)} — {formatDateFull(p.paidUntil)}</span>
+                                            {p.amount > 0 ? <span className="text-slate-500"> · {formatMoney(p.amount)} ₽</span> : null}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </section>
+
+                            {showAdd ? (
+                                <section className="rounded-2xl border border-[#55E6C1]/40 bg-emerald-50/40 p-3 space-y-2">
+                                    <p className="text-xs font-bold text-[#1E272E]">Новый период</p>
+                                    <label className="block text-[11px] font-semibold text-slate-500">Дата оплаты / начала</label>
+                                    <input type="date" value={newPaidAt} onChange={(e) => setNewPaidAt(e.target.value)} className="h-10 w-full rounded-lg bg-white border border-slate-200 px-2" />
+                                    <label className="block text-[11px] font-semibold text-slate-500">Действует до (+28 дней, можно изменить)</label>
+                                    <input type="date" value={newUntil} onChange={(e) => setNewUntil(e.target.value)} className="h-10 w-full rounded-lg bg-white border border-slate-200 px-2" />
+                                    <div className="flex gap-2 pt-1">
+                                        <button type="button" onClick={() => setShowAdd(false)} className="flex-1 h-9 rounded-lg bg-slate-200 text-sm font-bold">Отмена</button>
+                                        <button type="button" onClick={addPaymentPeriod} className="flex-1 h-9 rounded-lg bg-[#1E272E] text-white text-sm font-bold">Создать</button>
+                                    </div>
+                                </section>
+                            ) : null}
+
+                            <div className="flex flex-col gap-2">
+                                <button type="button" onClick={() => setEditTerm((v) => !v)} disabled={activeIdx < 0} className="h-10 rounded-xl bg-slate-100 text-slate-800 text-sm font-bold disabled:opacity-40">Изменить срок</button>
+                                <button type="button" onClick={() => setShowAdd((s) => !s)} className="h-10 rounded-xl bg-[#E8F8F2] text-[#1E272E] text-sm font-bold">+ Добавить новый период</button>
+                                <button type="button" onClick={handleSave} className="h-11 rounded-xl bg-[#1E272E] text-white text-sm font-bold">Сохранить</button>
+                            </div>
 
                             <button
                                 type="button"
                                 onClick={() => {
-                                    if (confirm('Удалить ученика? Это действие нельзя отменить.')) {
+                                    if (confirm('Удалить ученика?')) {
                                         onDeleteStudent(student.id);
                                         onClose();
                                     }
@@ -711,249 +540,226 @@
             );
         }
 
-        // -------------------------
-        // Главный компонент
-        // -------------------------
+        /** Таблица: слева ФИО + статус, справа — горизонтальный скролл посещений */
+        function AttendanceTable({ students, columns, onCellTap, onRowOpen }) {
+            const colw = 'min-w-[76px] w-[76px]';
+            return (
+                <div className="rounded-2xl border border-slate-200/90 bg-white overflow-hidden shadow-sm">
+                    <div className="flex">
+                        <div className="att-sticky-left shrink-0 w-[140px] sm:w-[160px] border-r border-slate-100">
+                            <div className="h-[72px] border-b border-slate-100 bg-slate-50 px-2 py-2 flex flex-col justify-center">
+                                <span className="text-[10px] font-bold text-slate-500 uppercase">Ученик</span>
+                            </div>
+                            {students.map((s) => {
+                                const st = abonnementStatusLine(s);
+                                return (
+                                    <button
+                                        key={s.id}
+                                        type="button"
+                                        onClick={() => onRowOpen(s)}
+                                        className="w-full text-left h-[72px] border-b border-slate-100 px-2 py-2 flex flex-col justify-center active:bg-slate-50"
+                                    >
+                                        <span className="text-[13px] font-semibold text-[#1E272E] leading-tight line-clamp-2">{s.name}</span>
+                                        <span className={`text-[11px] mt-1 font-medium ${st.ok ? 'text-emerald-700' : 'text-rose-600'}`}>{st.text}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <div className="att-scroll-x flex-1 min-w-0">
+                            <div className="inline-flex min-w-full flex-col">
+                                <div className="flex h-[72px] border-b border-slate-100 bg-slate-50">
+                                    {columns.map((c) => (
+                                        <div key={c.id} className={`${colw} shrink-0 border-r border-slate-100 px-1 py-2 flex flex-col items-center justify-center text-center`}>
+                                            <span className="text-[10px] font-bold text-[#1E272E] leading-tight line-clamp-2">{c.title}</span>
+                                            <span className="text-[9px] text-slate-500 mt-0.5">{formatDateShort(c.date)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                {students.map((s) => (
+                                    <div key={s.id} className="flex h-[72px] border-b border-slate-100 last:border-b-0">
+                                        {columns.map((c) => {
+                                            const v = s.attendance?.[c.id] ?? 0;
+                                            return (
+                                                <button
+                                                    key={c.id}
+                                                    type="button"
+                                                    onClick={(e) => { e.stopPropagation(); onCellTap(s, c.id); }}
+                                                    className={`${colw} shrink-0 border-r border-slate-100 flex items-center justify-center text-lg active:bg-slate-100`}
+                                                >
+                                                    {visitChar(v)}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         function App() {
             const initial = useMemo(() => loadAppState(), []);
+            const subjects = initial.subjects;
             const [students, setStudents] = useState(initial.students);
-            const [subjects, setSubjects] = useState(initial.subjects);
+            const [lessonColumnsByCategory, setLessonColumnsByCategory] = useState(initial.lessonColumnsByCategory);
 
             const [activeTab, setActiveTab] = useState('children');
-            const [womenGroup, setWomenGroup] = useState('group1');
             const [query, setQuery] = useState('');
-
             const [studentFormOpen, setStudentFormOpen] = useState(false);
-            const [editingStudentId, setEditingStudentId] = useState(null);
-            const [drawerStudentId, setDrawerStudentId] = useState(null);
-            const [subjectManagerOpen, setSubjectManagerOpen] = useState(false);
+            const [sheetStudentId, setSheetStudentId] = useState(null);
+            const [columnsEditorOpen, setColumnsEditorOpen] = useState(false);
 
+            useEffect(() => { setupPwaManifest(); }, []);
             useEffect(() => {
-                setupPwaManifest();
-            }, []);
-
-            useEffect(() => {
-                saveAppState(students, subjects);
-            }, [students, subjects]);
+                saveAppState(students, subjects, lessonColumnsByCategory);
+            }, [students, subjects, lessonColumnsByCategory]);
 
             const filtered = useMemo(() => {
                 const q = query.trim().toLowerCase();
                 return students.filter((s) => {
                     if (s.category !== activeTab) return false;
-                    if (activeTab === 'women' && s.subGroup !== womenGroup) return false;
                     if (q && !s.name.toLowerCase().includes(q)) return false;
                     return true;
                 });
-            }, [students, activeTab, womenGroup, query]);
+            }, [students, activeTab, query]);
 
-            const stats = useMemo(() => {
-                const allInTab = students.filter((s) => {
-                    if (s.category !== activeTab) return false;
-                    if (activeTab === 'women' && s.subGroup !== womenGroup) return false;
-                    return true;
-                });
-                let activeCount = 0;
-                let debtCount = 0;
-                allInTab.forEach((s) => {
-                    const p = s.periods[s.currentPeriodIndex];
-                    if (p && !isExpired(p.endDate)) activeCount += 1;
-                    if (p && !p.isPaid) debtCount += 1;
-                });
-                return {
-                    total: allInTab.length,
-                    active: activeCount,
-                    debt: debtCount
-                };
-            }, [students, activeTab, womenGroup]);
-
-            const drawerStudent = drawerStudentId ? students.find((s) => s.id === drawerStudentId) : null;
-            const editingStudent = editingStudentId ? students.find((s) => s.id === editingStudentId) : null;
+            const columns = lessonColumnsByCategory[activeTab] || [];
 
             const upsertStudent = useCallback((student) => {
                 setStudents((prev) => {
-                    const index = prev.findIndex((x) => x.id === student.id);
-                    if (index === -1) return [...prev, normalizeStudent(student, subjects)];
+                    const i = prev.findIndex((x) => x.id === student.id);
+                    const norm = normalizeStudent(student, subjects);
+                    if (i === -1) return [...prev, norm];
                     const next = [...prev];
-                    next[index] = normalizeStudent(student, subjects);
+                    next[i] = norm;
                     return next;
                 });
             }, [subjects]);
 
-            const deleteStudent = useCallback((studentId) => {
-                setStudents((prev) => prev.filter((s) => s.id !== studentId));
+            const deleteStudent = useCallback((id) => {
+                setStudents((prev) => prev.filter((s) => s.id !== id));
             }, []);
 
-            const addStudent = (fields) => {
-                const category = activeTab;
-                const start = todayISO();
-                const firstPeriod = normalizePeriod({
-                    paymentDate: start,
-                    startDate: start,
-                    endDate: addDaysISO(start, 28),
-                    amount: 5000,
-                    isPaid: true,
-                    lessons: []
-                }, subjects);
+            const addStudent = useCallback((name) => {
+                const t = todayISO();
+                const payments = [{
+                    id: uid(),
+                    paidFrom: t,
+                    paidUntil: addDaysISO(t, 28),
+                    paidAt: t,
+                    amount: 0
+                }];
                 upsertStudent({
                     id: uid(),
-                    name: fields.name,
-                    category,
-                    subGroup: category === 'women' ? (fields.subGroup || 'group1') : 'default',
-                    phone: fields.phone || '',
-                    note: fields.note || '',
-                    periods: [firstPeriod],
-                    currentPeriodIndex: 0
+                    name,
+                    category: activeTab,
+                    subGroup: activeTab === 'women' ? 'group1' : 'default',
+                    payments,
+                    attendance: {}
                 });
                 setStudentFormOpen(false);
-            };
+            }, [activeTab, upsertStudent]);
+
+            const onCellTap = useCallback((student, columnId) => {
+                setStudents((prev) => prev.map((s) => {
+                    if (s.id !== student.id) return s;
+                    const cur = Number(s.attendance?.[columnId]) || 0;
+                    const nextVal = cycleVisit(cur);
+                    const att = { ...s.attendance, [columnId]: nextVal };
+                    return normalizeStudent({ ...s, attendance: att }, subjects);
+                }));
+            }, [subjects]);
+
+            const sheetStudent = sheetStudentId ? students.find((s) => s.id === sheetStudentId) : null;
 
             return (
-                <div className="app-bg min-h-screen min-h-[100dvh] max-w-md mx-auto text-[#1E272E]">
+                <div className="app-bg min-h-screen min-h-[100dvh] max-w-lg mx-auto text-[#1E272E]">
                     <header className="sticky top-0 z-40 safe-top header-glass border-b border-white/80">
-                        <div className="px-4 pt-3 pb-3">
+                        <div className="px-3 pt-3 pb-3">
                             <div className="flex items-center justify-between gap-2">
                                 <div>
-                                    <h1 className="text-[22px] font-black tracking-tight leading-none">2FACE CRM</h1>
-                                    <p className="mt-1 text-[10px] uppercase tracking-[0.17em] font-semibold text-slate-500">
+                                    <h1 className="text-xl font-black tracking-tight leading-none">2FACE</h1>
+                                    <p className="mt-0.5 text-[10px] uppercase tracking-[0.14em] font-semibold text-slate-500">
                                         {CATEGORIES.find((c) => c.id === activeTab)?.label}
                                     </p>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <button type="button" onClick={() => setSubjectManagerOpen(true)} className="h-9 px-3 rounded-xl bg-slate-100 text-slate-700 text-[11px] font-bold">Предметы</button>
-                                    <button type="button" onClick={() => { setEditingStudentId(null); setStudentFormOpen(true); }} className="h-9 px-3 rounded-xl bg-[#1E272E] text-white text-[11px] font-bold">+ Ученик</button>
+                                <div className="flex gap-1.5">
+                                    <button type="button" onClick={() => setColumnsEditorOpen(true)} className="h-9 px-2.5 rounded-xl bg-slate-100 text-slate-700 text-[10px] font-bold">Занятия</button>
+                                    <button type="button" onClick={() => setStudentFormOpen(true)} className="h-9 px-2.5 rounded-xl bg-[#1E272E] text-white text-[10px] font-bold">+ Ученик</button>
                                 </div>
                             </div>
-
-                            <div className="mt-3">
-                                <input
-                                    type="search"
-                                    placeholder="Поиск по имени или фамилии"
-                                    value={query}
-                                    onChange={(e) => setQuery(e.target.value)}
-                                    className="h-10 w-full rounded-xl bg-slate-100 px-3 text-sm outline-none focus:ring-2 focus:ring-[#55E6C1]"
-                                />
-                            </div>
-
-                            {activeTab === 'women' && (
-                                <div className="mt-2 flex rounded-xl bg-slate-100 p-1">
-                                    {WOMEN_GROUPS.map((g) => (
-                                        <button
-                                            key={g.id}
-                                            type="button"
-                                            onClick={() => setWomenGroup(g.id)}
-                                            className={`flex-1 h-8 rounded-lg text-[10px] font-bold uppercase ${womenGroup === g.id ? 'bg-white text-[#1E272E] shadow-sm' : 'text-slate-500'}`}
-                                        >
-                                            {g.label}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
+                            <input
+                                type="search"
+                                value={query}
+                                onChange={(e) => setQuery(e.target.value)}
+                                placeholder="Поиск ученика"
+                                className="mt-3 h-10 w-full rounded-xl bg-slate-100 px-3 text-sm outline-none focus:ring-2 focus:ring-[#55E6C1]"
+                            />
                         </div>
                     </header>
 
-                    <main className="px-3 py-3 pb-32">
-                        <section className="grid grid-cols-3 gap-2 mb-3">
-                            <div className="bg-white rounded-xl stat-card-shadow border border-white/90 px-2 py-2.5">
-                                <p className="text-[10px] text-slate-500 font-semibold">Всего</p>
-                                <p className="text-lg leading-none mt-1 font-black text-[#1E272E]">{stats.total}</p>
-                            </div>
-                            <div className="bg-white rounded-xl stat-card-shadow border border-white/90 px-2 py-2.5">
-                                <p className="text-[10px] text-slate-500 font-semibold">Активных</p>
-                                <p className="text-lg leading-none mt-1 font-black text-emerald-700">{stats.active}</p>
-                            </div>
-                            <div className="bg-white rounded-xl stat-card-shadow border border-white/90 px-2 py-2.5">
-                                <p className="text-[10px] text-slate-500 font-semibold">С долгом</p>
-                                <p className="text-lg leading-none mt-1 font-black text-rose-700">{stats.debt}</p>
-                            </div>
-                        </section>
-
+                    <main className="px-2 py-3 pb-28">
                         {filtered.length === 0 ? (
-                            <section className="mt-4 bg-white rounded-2xl stat-card-shadow border border-white/90 p-7 text-center">
-                                <p className="text-sm font-semibold text-slate-600">Список пуст</p>
-                                <p className="text-xs text-slate-500 mt-1">Добавьте ученика или смените фильтр.</p>
-                            </section>
+                            <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600">
+                                Нет учеников. Нажмите «+ Ученик».
+                            </div>
                         ) : (
-                            <section className="space-y-2.5">
-                                {filtered.map((student) => {
-                                    const period = student.periods[student.currentPeriodIndex];
-                                    return (
-                                        <StudentCompactRow
-                                            key={student.id}
-                                            student={student}
-                                            period={period}
-                                            onOpen={() => setDrawerStudentId(student.id)}
-                                        />
-                                    );
-                                })}
-                            </section>
+                            <AttendanceTable
+                                students={filtered}
+                                columns={columns}
+                                onCellTap={onCellTap}
+                                onRowOpen={(s) => setSheetStudentId(s.id)}
+                            />
                         )}
                     </main>
 
-                    <nav className="fixed bottom-0 left-0 right-0 bg-[#1E272E] rounded-t-[3rem] px-3 pt-3 pb-6 safe-bottom z-50">
-                        <div className="max-w-md mx-auto flex justify-around items-center">
+                    <nav className="fixed bottom-0 left-0 right-0 bg-[#1E272E] rounded-t-[2.5rem] px-2 pt-2.5 pb-5 safe-bottom z-50">
+                        <div className="max-w-lg mx-auto flex justify-around">
                             {CATEGORIES.map((cat) => (
                                 <button
                                     key={cat.id}
                                     type="button"
                                     onClick={() => setActiveTab(cat.id)}
-                                    className={`relative min-w-[72px] py-2 px-1 flex flex-col items-center active:scale-95 transition-transform ${activeTab === cat.id ? 'text-[#55E6C1]' : 'text-slate-500'}`}
+                                    className={`relative py-2 px-1 min-w-[4.25rem] flex flex-col items-center active:scale-95 transition-transform ${activeTab === cat.id ? 'text-[#55E6C1]' : 'text-slate-500'}`}
                                 >
-                                    {activeTab === cat.id && <div className="active-tab-indicator"></div>}
-                                    <span className="text-[11px] font-bold uppercase tracking-wide">{cat.label}</span>
+                                    {activeTab === cat.id && <div className="active-tab-indicator" />}
+                                    <span className="text-[10px] font-bold uppercase text-center leading-tight">{cat.label}</span>
                                 </button>
                             ))}
                         </div>
                     </nav>
 
-                    {(studentFormOpen || editingStudent) && (
+                    {studentFormOpen && (
                         <div className="fixed inset-0 z-[70]">
-                            <div className="absolute inset-0 bg-black/35" onClick={() => { setStudentFormOpen(false); setEditingStudentId(null); }}></div>
+                            <div className="absolute inset-0 bg-black/35" onClick={() => setStudentFormOpen(false)} />
                             <section className="absolute bottom-0 inset-x-0 bg-white rounded-t-[2rem] p-4 safe-bottom sheet-shadow">
-                                <div className="w-10 h-1.5 bg-slate-200 rounded-full mx-auto mb-3"></div>
-                                <h3 className="text-base font-bold text-[#1E272E] mb-3">{editingStudent ? 'Редактирование ученика' : 'Новый ученик'}</h3>
-                                <StudentForm
-                                    initial={editingStudent || {}}
-                                    category={editingStudent ? editingStudent.category : activeTab}
-                                    onCancel={() => { setStudentFormOpen(false); setEditingStudentId(null); }}
-                                    onSave={(fields) => {
-                                        if (editingStudent) {
-                                            upsertStudent({ ...editingStudent, ...fields });
-                                            setEditingStudentId(null);
-                                        } else {
-                                            addStudent(fields);
-                                        }
-                                    }}
-                                />
+                                <div className="w-10 h-1.5 bg-slate-200 rounded-full mx-auto mb-3" />
+                                <h3 className="text-base font-bold mb-3">Новый ученик</h3>
+                                <AddStudentForm onCancel={() => setStudentFormOpen(false)} onSave={(f) => addStudent(f.name)} />
                             </section>
                         </div>
                     )}
 
-                    {drawerStudent && (
-                        <StudentDrawer
-                            student={drawerStudent}
+                    {sheetStudent && (
+                        <StudentCardSheet
+                            student={sheetStudent}
                             subjects={subjects}
-                            onClose={() => setDrawerStudentId(null)}
+                            onClose={() => setSheetStudentId(null)}
                             onSaveStudent={upsertStudent}
                             onDeleteStudent={deleteStudent}
                         />
                     )}
 
-                    {subjectManagerOpen && (
-                        <SubjectManager
-                            subjects={subjects}
-                            onClose={() => setSubjectManagerOpen(false)}
-                            onChange={(nextSubjects) => {
-                                setSubjects(nextSubjects);
-                                setStudents((prev) => prev.map((st) => ({
-                                    ...st,
-                                    periods: st.periods.map((p) => ({
-                                        ...p,
-                                        lessons: p.lessons.map((l) => ({
-                                            ...l,
-                                            subject: nextSubjects.includes(l.subject) ? l.subject : (nextSubjects[0] || 'Занятие')
-                                        }))
-                                    }))
-                                })));
+                    {columnsEditorOpen && (
+                        <LessonColumnsEditor
+                            columns={columns}
+                            onClose={() => setColumnsEditorOpen(false)}
+                            onSave={(next) => {
+                                const safe = next.length ? next : defaultLessonColumnsForCategory(activeTab, subjects);
+                                setLessonColumnsByCategory((prev) => ({ ...prev, [activeTab]: safe }));
+                                setColumnsEditorOpen(false);
                             }}
                         />
                     )}
